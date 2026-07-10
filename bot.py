@@ -19,27 +19,32 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 AMOUNT = 35
 
 PAIRS = [
-    "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "EURJPY-OTC",
-    "USDJPY-OTC",
-    "USDCHF-OTC",
-    "USDCAD-OTC",
-    "AUDUSD-OTC",
     "AUDCAD-OTC",
+    "AUDCHF-OTC",
     "AUDJPY-OTC",
+    "AUDNZD-OTC",
+    "AUDUSD-OTC",
+    "CADCHF-OTC",
     "CADJPY-OTC",
-    "EURGBP-OTC",
-    "EURCHF-OTC",
+    "CHFJPY-OTC",
+    "CHFNOK-OTC",
     "EURAUD-OTC",
     "EURCAD-OTC",
+    "EURCHF-OTC",
+    "EURGBP-OTC",
+    "EURJPY-OTC",
     "EURNZD-OTC",
     "EURTHB-OTC",
+    "EURUSD-OTC",
     "GBPAUD-OTC",
     "GBPCAD-OTC",
     "GBPCHF-OTC",
     "GBPJPY-OTC",
-    "CHFNOK-OTC"
+    "GBPNZD-OTC",
+    "GBPUSD-OTC",
+    "JPYTHB-OTC",
+    "NOKJPY-OTC",
+    "NZDCAD-OTC",
 ]
 
 trade_open = False
