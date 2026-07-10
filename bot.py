@@ -21,7 +21,25 @@ AMOUNT = 35
 PAIRS = [
     "EURUSD-OTC",
     "GBPUSD-OTC",
-    "EURJPY-OTC"
+    "EURJPY-OTC",
+    "USDJPY-OTC",
+    "USDCHF-OTC",
+    "USDCAD-OTC",
+    "AUDUSD-OTC",
+    "AUDCAD-OTC",
+    "AUDJPY-OTC",
+    "CADJPY-OTC",
+    "EURGBP-OTC",
+    "EURCHF-OTC",
+    "EURAUD-OTC",
+    "EURCAD-OTC",
+    "EURNZD-OTC",
+    "EURTHB-OTC",
+    "GBPAUD-OTC",
+    "GBPCAD-OTC",
+    "GBPCHF-OTC",
+    "GBPJPY-OTC",
+    "CHFNOK-OTC"
 ]
 
 trade_open = False
