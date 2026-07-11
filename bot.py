@@ -16,24 +16,19 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 35
+AMOUNT = 2
+
 
 PAIRS = [
-    "AUDCAD-OTC",
-    "AUDCHF-OTC",
-    "AUDJPY-OTC",
-    "AUDNZD-OTC",
     "AUDUSD-OTC",
     "CADCHF-OTC",
     "CADJPY-OTC",
     "CHFJPY-OTC",
     "CHFNOK-OTC",
-    "EURAUD-OTC",
     "EURCAD-OTC",
     "EURCHF-OTC",
     "EURGBP-OTC",
     "EURJPY-OTC",
-    "EURNZD-OTC",
     "EURTHB-OTC",
     "EURUSD-OTC",
     "GBPAUD-OTC",
@@ -42,9 +37,6 @@ PAIRS = [
     "GBPJPY-OTC",
     "GBPNZD-OTC",
     "GBPUSD-OTC",
-    "JPYTHB-OTC",
-    "NOKJPY-OTC",
-    "NZDCAD-OTC",
 ]
 
 trade_open = False
