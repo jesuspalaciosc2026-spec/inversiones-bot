@@ -16,7 +16,7 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 20
+AMOUNT = 33
 
 PAIRS = [
     "EURUSD-OTC",
@@ -131,7 +131,7 @@ while True:
 
         t = int(iq.get_server_timestamp())
 
-        # Espera hasta los últimos segundos de la vela
+        # Espera últimos segundos de la vela
         if t % 60 < 55:
             time.sleep(0.2)
             continue
@@ -140,12 +140,12 @@ while True:
 
             df_m1 = get_candles(pair, 60)
             df_m5 = get_candles(pair, 300)
-            df_h3 = get_candles(pair, 900)
+            df_htf = get_candles(pair, 900)
 
-            if df_m1 is None or df_m5 is None or df_h3 is None:
+            if df_m1 is None or df_m5 is None or df_htf is None:
                 continue
 
-            signal, expiration = pro_signal(df_m1, df_m5, df_h3)
+            signal, expiration = pro_signal(df_m1, df_m5, df_htf)
 
             # 🔁 INVERTIR SEÑAL
             if signal == "call":
