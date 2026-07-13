@@ -37,7 +37,7 @@ def add_indicators(df):
 # ================= DETECTAR NIVELES SOPORTE/RESISTENCIA (HTF) =================
 def get_zone(df_htf):
     """Obtiene niveles con validación de datos suficientes"""
-    if len(df_htf) < CONFIG["min_velas_htf"]:
+    if df_htf is None or df_htf.empty or len(df_htf) < CONFIG["min_velas_htf"]:
         return None, None
     
     df_ventana = df_htf.tail(CONFIG["ventana_niveles"])
@@ -49,11 +49,11 @@ def get_zone(df_htf):
 # ================= VERIFICAR DOBLE PRUEBA DE NIVEL =================
 def double_touch(df_m5, nivel, es_soporte=True):
     """Valida al menos 2 toques sin romper el nivel definitivamente"""
-    if len(df_m5) < CONFIG["min_velas_m5"]:
+    if df_m5 is None or df_m5.empty or len(df_m5) < CONFIG["min_velas_m5"]:
         return False
     
     conteo_toques = 0
-    umbral_ruptura = nivel * 0.0015  # 0.15% de margen para no confundir ruido
+    umbral_ruptura = nivel * 0.0015  # Margen 0.15% para ignorar ruido
     
     for i in range(-CONFIG["ventana_pruebas"], 0):
         vela = df_m5.iloc[i]
@@ -69,22 +69,22 @@ def double_touch(df_m5, nivel, es_soporte=True):
 
 # ================= CONFIRMACIÓN DE VELA Y TENDENCIA =================
 def confirmation(df_m1, direccion, df_htf=None):
-    """Confirma dirección y tendencia mayor para evitar señales contrarias"""
-    if len(df_m1) < CONFIG["min_velas_m1"]:
+    """Confirma dirección y filtra señales contrarias a la tendencia mayor"""
+    if df_m1 is None or df_m1.empty or len(df_m1) < CONFIG["min_velas_m1"]:
         return False
     
     ultima = df_m1.iloc[-1]
     vela_anterior = df_m1.iloc[-2]
     
-    # Confirmación básica de color
+    # Confirmación básica de color y fuerza
     valido = False
     if direccion == "call":
         valido = (ultima["close"] > ultima["open"]) and (ultima["close"] > vela_anterior["close"])
     elif direccion == "put":
         valido = (ultima["close"] < ultima["open"]) and (ultima["close"] < vela_anterior["close"])
     
-    # Filtrar por tendencia del marco mayor (opcional pero muy efectivo)
-    if valido and df_htf is not None and len(df_htf) >= CONFIG["min_velas_htf"]:
+    # Filtrar por tendencia del marco mayor (1H)
+    if valido and df_htf is not None and not df_htf.empty and len(df_htf) >= CONFIG["min_velas_htf"]:
         ema_htf = df_htf["ema20"].iloc[-1]
         precio_htf = df_htf["close"].iloc[-1]
         
@@ -99,23 +99,22 @@ def confirmation(df_m1, direccion, df_htf=None):
 def pro_signal(df_m1, df_m5, df_htf):
     """
     Genera señal validada:
-    - Retorna: (direccion, expiracion_en_minutos) o (None, None)
+    Retorna: (direccion, expiracion_en_minutos) o (None, None)
     """
-    # Validar que todos los marcos tengan datos suficientes
+    # ✅ VALIDACIÓN SEGURA QUE ELIMINA EL ERROR DE DATOS
     if any([
-        len(df_htf) < CONFIG["min_velas_htf"],
-        len(df_m5) < CONFIG["min_velas_m5"],
-        len(df_m1) < CONFIG["min_velas_m1"]
+        df_htf is None or df_htf.empty or len(df_htf) < CONFIG["min_velas_htf"],
+        df_m5 is None or df_m5.empty or len(df_m5) < CONFIG["min_velas_m5"],
+        df_m1 is None or df_m1.empty or len(df_m1) < CONFIG["min_velas_m1"]
     ]):
         return None, None
     
     # Agregar indicadores si no existen
-    if "ema20" not in df_htf.columns:
+    if "ema20" not in df_htf.columns or "atr" not in df_m1.columns:
         df_htf = add_indicators(df_htf)
-    if "atr" not in df_m1.columns:
         df_m1 = add_indicators(df_m1)
     
-    # Obtener niveles y datos
+    # Obtener niveles
     soporte, resistencia = get_zone(df_htf)
     if soporte is None or resistencia is None:
         return None, None
