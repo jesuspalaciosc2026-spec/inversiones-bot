@@ -12,20 +12,19 @@ from strategy import add_indicators, pro_signal
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
 
-# Lee credenciales desde variables de entorno (seguro para Railway/GitHub)
+# Lee credenciales desde variables de entorno
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = float(os.getenv("TRADE_AMOUNT", 9))  # Monto por operación
+AMOUNT = float(os.getenv("TRADE_AMOUNT", 9))
 
-# Activos OTC a analizar
+# ✅ LISTA DE ACTIVOS CORREGIDA (SIN -OTC, la API detecta OTC automáticamente)
 PAIRS = [
-    "AUDUSD-OTC", "CADCHF-OTC", "CADJPY-OTC", "CHFJPY-OTC", "CHFNOK-OTC",
-    "EURCAD-OTC", "EURCHF-OTC", "EURGBP-OTC", "EURJPY-OTC", "EURTHB-OTC",
-    "EURUSD-OTC", "GBPAUD-OTC", "GBPCAD-OTC", "GBPCHF-OTC", "GBPJPY-OTC",
-    "GBPNZD-OTC", "GBPUSD-OTC"
+    "AUDUSD", "CADCHF", "CADJPY", "CHFJPY", "EURCAD",
+    "EURCHF", "EURGBP", "EURJPY", "EURUSD", "GBPAUD",
+    "GBPCAD", "GBPCHF", "GBPJPY", "GBPNZD", "GBPUSD"
 ]
 
 # Estados del bot
@@ -35,10 +34,10 @@ bot_active = True
 last_update_id = None
 current_expiration = 1
 
-# Marcos de tiempo (coinciden con strategy.py)
+# Marcos de tiempo
 TF_M1 = 60    # 1 minuto
 TF_M5 = 300   # 5 minutos
-TF_HTF = 3600 # 1 HORA (antes usabas 15min, actualizado para mejor precisión)
+TF_HTF = 3600 # 1 HORA
 # -------------------------------------------------------------------
 
 # ================= NOTIFICACIONES TELEGRAM =================
@@ -87,7 +86,7 @@ def conectar_iq():
     while intentos < 5:
         check, razon = iq.connect()
         if check:
-            iq.change_balance("PRACTICE")  # Cambia a "LIVE" para real
+            iq.change_balance("PRACTICE")
             print("✅ Conectado exitosamente a IQ Option")
             send_telegram("🔥 **BOT INICIADO** | MODO: SEÑALES INVERTIDAS | CUENTA: PRÁCTICA")
             return iq
@@ -103,13 +102,13 @@ def get_data(iq, par, tf):
     try:
         velas = iq.get_candles(par, tf, 40, time.time())
         if not velas:
+            print(f"⚠️ Sin datos para {par}")
             return None
         df = pd.DataFrame(velas)
-        # Renombrar columnas al formato que usa la estrategia
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return add_indicators(df)
     except Exception as e:
-        print(f"⚠️ Datos no disponibles para {par}: {str(e)}")
+        print(f"⚠️ Error al obtener {par}: {str(e)}")
         return None
 
 # ================= EJECUTAR OPERACIÓN =================
@@ -142,11 +141,11 @@ ID: `{id_op}`"""
 # ================= BUCLE PRINCIPAL =================
 if __name__ == "__main__":
     if not EMAIL or not PASSWORD:
-        print("❌ Define las variables de entorno IQ_EMAIL y IQ_PASSWORD")
+        print("❌ Define las variables IQ_EMAIL y IQ_PASSWORD en Railway")
         sys.exit(1)
 
     iq = conectar_iq()
-    print("🔍 Iniciando análisis de activos OTC...")
+    print("🔍 Iniciando análisis de activos...")
 
     while True:
         try:
@@ -155,13 +154,13 @@ if __name__ == "__main__":
                 time.sleep(2)
                 continue
 
-            # Esperar fin de vela para evitar señales incompletas
+            # Esperar hasta el final de la vela
             servidor_tiempo = int(iq.get_server_timestamp())
             if servidor_tiempo % 60 < 55:
                 time.sleep(0.3)
                 continue
 
-            # Liberar estado si ya venció la operación anterior
+            # Liberar operación finalizada
             if trade_open:
                 if time.time() - last_trade_time > (current_expiration * 60) + 10:
                     trade_open = False
@@ -175,15 +174,16 @@ if __name__ == "__main__":
                 df_m5 = get_data(iq, par, TF_M5)
                 df_htf = get_data(iq, par, TF_HTF)
 
-                if not all([df_m1, df_m5, df_htf]):
+                # ✅ VALIDACIÓN SEGURA DE DATAFRAMES (elimina el error "ambiguous truth value")
+                if any(df is None or df.empty for df in [df_m1, df_m5, df_htf]):
                     continue
 
-                # Obtener señal e INVERTIRLA como pediste
+                # Obtener e invertir señal
                 señal_original, expiracion = pro_signal(df_m1, df_m5, df_htf)
                 if señal_original:
                     señal_final = "put" if señal_original.lower() == "call" else "call"
                     abrir_operacion(iq, par, señal_final, expiracion)
-                    break  # Una operación por ciclo
+                    break
 
             time.sleep(2)
 
