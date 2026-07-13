@@ -31,7 +31,7 @@ def get_zone(df_htf):
     return support, resistance
 
 
-# ================= DOBLE TEST =================
+# ================= TOQUE FLEXIBLE =================
 
 def double_touch(df_m5, level, is_support=True):
     touches = 0
@@ -46,19 +46,26 @@ def double_touch(df_m5, level, is_support=True):
             if candle["high"] >= level:
                 touches += 1
 
-    return touches >= 2
+    # 🔥 antes era >= 2 (muy estricto)
+    return touches >= 1
 
 
-# ================= CONFIRMACIÓN =================
+# ================= CONFIRMACIÓN MEJORADA =================
 
 def confirmation(df_m1, direction):
     last = df_m1.iloc[-1]
+    prev = df_m1.iloc[-2]
+
+    body = abs(last["close"] - last["open"])
+    range_ = last["high"] - last["low"]
+
+    strong = body > (range_ * 0.5)
 
     if direction == "call":
-        return last["close"] > last["open"]
+        return last["close"] > last["open"] and strong and last["close"] > prev["close"]
 
     if direction == "put":
-        return last["close"] < last["open"]
+        return last["close"] < last["open"] and strong and last["close"] < prev["close"]
 
     return False
 
@@ -78,14 +85,19 @@ def pro_signal(df_m1, df_m5, df_htf):
     if np.isnan(atr):
         return None, None
 
-    # Margen dinámico basado en ATR
-    buffer = atr * 1.2
+    # 🔥 buffer más flexible
+    buffer = atr * 1.8
 
     # ========= SOPORTE =========
 
     if abs(price - support) <= buffer:
         if double_touch(df_m5, support, True):
             if confirmation(df_m1, "call"):
+
+                # ⚡ entrada rápida si está muy cerca
+                if abs(price - support) <= atr:
+                    return "call", 2
+
                 return "call", 3
 
     # ========= RESISTENCIA =========
@@ -93,6 +105,10 @@ def pro_signal(df_m1, df_m5, df_htf):
     if abs(price - resistance) <= buffer:
         if double_touch(df_m5, resistance, False):
             if confirmation(df_m1, "put"):
+
+                if abs(price - resistance) <= atr:
+                    return "put", 2
+
                 return "put", 3
 
     return None, None
