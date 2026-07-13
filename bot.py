@@ -147,6 +147,12 @@ while True:
 
             signal, expiration = pro_signal(df_m1, df_m5, df_h3)
 
+            # 🔁 INVERTIR SEÑAL
+            if signal == "call":
+                signal = "put"
+            elif signal == "put":
+                signal = "call"
+
             if signal:
                 trade(pair, signal, expiration)
                 break
