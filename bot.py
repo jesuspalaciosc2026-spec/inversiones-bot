@@ -16,7 +16,7 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 2
+AMOUNT = 9
 
 
 PAIRS = [
@@ -95,8 +95,8 @@ if not iq.check_connect():
 
 iq.change_balance("PRACTICE")
 
-print("🔥 BOT ACTIVO")
-send("🔥 BOT ACTIVO")
+print("🔥 BOT ACTIVO | SEÑALES INVERTIDAS")
+send("🔥 BOT ACTIVO | MODO: SEÑALES INVERTIDAS")
 
 # ================= DATOS =================
 
@@ -121,7 +121,7 @@ def trade(pair, direction, expiration):
         last_trade_time = time.time()
         current_expiration = expiration
 
-        msg = f"🎯 {pair} {direction.upper()} ({expiration}m)"
+        msg = f"🎯 {pair} {direction.upper()} ({expiration}m) | Señal invertida"
         print(msg)
         send(msg)
     else:
@@ -160,9 +160,12 @@ while True:
             if df_m1 is None or df_m5 is None or df_h3 is None:
                 continue
 
-            signal, expiration = pro_signal(df_m1, df_m5, df_h3)
-
-            if signal:
+            # ✅ AQUÍ SE INVIERTE LA SEÑAL (única modificación lógica)
+            signal_original, expiration = pro_signal(df_m1, df_m5, df_h3)
+            
+            if signal_original:
+                # Invierte la dirección: call ↔ put
+                signal = "put" if signal_original.lower() == "call" else "call"
                 trade(pair, signal, expiration)
                 break
 
