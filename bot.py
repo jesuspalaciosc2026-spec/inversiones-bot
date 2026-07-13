@@ -8,169 +8,186 @@ import logging
 from iqoptionapi.stable_api import IQ_Option
 from strategy import add_indicators, pro_signal
 
+# -------------------------- CONFIGURACIÓN --------------------------
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
 
+# Lee credenciales desde variables de entorno (seguro para Railway/GitHub)
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 9
+AMOUNT = float(os.getenv("TRADE_AMOUNT", 9))  # Monto por operación
 
-
+# Activos OTC a analizar
 PAIRS = [
-    "AUDUSD-OTC",
-    "CADCHF-OTC",
-    "CADJPY-OTC",
-    "CHFJPY-OTC",
-    "CHFNOK-OTC",
-    "EURCAD-OTC",
-    "EURCHF-OTC",
-    "EURGBP-OTC",
-    "EURJPY-OTC",
-    "EURTHB-OTC",
-    "EURUSD-OTC",
-    "GBPAUD-OTC",
-    "GBPCAD-OTC",
-    "GBPCHF-OTC",
-    "GBPJPY-OTC",
-    "GBPNZD-OTC",
-    "GBPUSD-OTC",
+    "AUDUSD-OTC", "CADCHF-OTC", "CADJPY-OTC", "CHFJPY-OTC", "CHFNOK-OTC",
+    "EURCAD-OTC", "EURCHF-OTC", "EURGBP-OTC", "EURJPY-OTC", "EURTHB-OTC",
+    "EURUSD-OTC", "GBPAUD-OTC", "GBPCAD-OTC", "GBPCHF-OTC", "GBPJPY-OTC",
+    "GBPNZD-OTC", "GBPUSD-OTC"
 ]
 
+# Estados del bot
 trade_open = False
 last_trade_time = 0
 bot_active = True
 last_update_id = None
 current_expiration = 1
 
-# ================= TELEGRAM =================
+# Marcos de tiempo (coinciden con strategy.py)
+TF_M1 = 60    # 1 minuto
+TF_M5 = 300   # 5 minutos
+TF_HTF = 3600 # 1 HORA (antes usabas 15min, actualizado para mejor precisión)
+# -------------------------------------------------------------------
 
-def send(msg):
+# ================= NOTIFICACIONES TELEGRAM =================
+def send_telegram(msg):
+    if not TOKEN or not CHAT_ID:
+        return
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=5
+            data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=10
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"⚠️ Error al enviar a Telegram: {str(e)}")
 
-
-def check_commands():
+# ================= COMANDOS TELEGRAM =================
+def check_telegram_commands():
     global bot_active, last_update_id
-
+    if not TOKEN:
+        return
     try:
+        params = {"timeout": 1, "offset": last_update_id} if last_update_id else {"timeout": 1}
         r = requests.get(
             f"https://api.telegram.org/bot{TOKEN}/getUpdates",
-            params={"timeout": 1, "offset": last_update_id},
+            params=params,
             timeout=5
         ).json()
 
         for result in r.get("result", []):
             last_update_id = result["update_id"] + 1
-
-            text = result.get("message", {}).get("text", "")
+            text = result.get("message", {}).get("text", "").strip().lower()
 
             if text == "/stop":
                 bot_active = False
-                send("⛔ BOT DETENIDO")
-
+                send_telegram("⛔ **BOT DETENIDO** por comando")
             elif text == "/start":
                 bot_active = True
-                send("✅ BOT ACTIVADO")
-
+                send_telegram("✅ **BOT ACTIVADO** por comando")
     except Exception:
         pass
 
-# ================= IQ OPTION =================
+# ================= CONEXIÓN IQ OPTION =================
+def conectar_iq():
+    iq = IQ_Option(EMAIL, PASSWORD)
+    intentos = 0
+    while intentos < 5:
+        check, razon = iq.connect()
+        if check:
+            iq.change_balance("PRACTICE")  # Cambia a "LIVE" para real
+            print("✅ Conectado exitosamente a IQ Option")
+            send_telegram("🔥 **BOT INICIADO** | MODO: SEÑALES INVERTIDAS | CUENTA: PRÁCTICA")
+            return iq
+        print(f"⚠️ Intento {intentos+1} fallido: {razon}")
+        intentos += 1
+        time.sleep(10)
+    print("❌ No se pudo conectar a IQ Option")
+    send_telegram("❌ ERROR: No se pudo conectar a IQ Option")
+    sys.exit(1)
 
-iq = IQ_Option(EMAIL, PASSWORD)
-iq.connect()
-
-if not iq.check_connect():
-    print("❌ Error de conexión con IQ Option")
-    exit()
-
-iq.change_balance("PRACTICE")
-
-print("🔥 BOT ACTIVO | SEÑALES INVERTIDAS")
-send("🔥 BOT ACTIVO | MODO: SEÑALES INVERTIDAS")
-
-# ================= DATOS =================
-
-def get_candles(pair, tf):
+# ================= OBTENER VELAS E INDICADORES =================
+def get_data(iq, par, tf):
     try:
-        data = iq.get_candles(pair, tf, 100, time.time())
-        df = pd.DataFrame(data)
+        velas = iq.get_candles(par, tf, 40, time.time())
+        if not velas:
+            return None
+        df = pd.DataFrame(velas)
+        # Renombrar columnas al formato que usa la estrategia
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return add_indicators(df)
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Datos no disponibles para {par}: {str(e)}")
         return None
 
-# ================= TRADE =================
-
-def trade(pair, direction, expiration):
+# ================= EJECUTAR OPERACIÓN =================
+def abrir_operacion(iq, par, direccion, expiracion):
     global trade_open, last_trade_time, current_expiration
-
-    status, _ = iq.buy(AMOUNT, pair, direction, expiration)
-
-    if status:
-        trade_open = True
-        last_trade_time = time.time()
-        current_expiration = expiration
-
-        msg = f"🎯 {pair} {direction.upper()} ({expiration}m) | Señal invertida"
-        print(msg)
-        send(msg)
-    else:
-        print(f"❌ No se pudo abrir operación en {pair}")
-
-# ================= LOOP PRINCIPAL =================
-
-while True:
     try:
-        check_commands()
+        ok, id_op = iq.buy(AMOUNT, par, direccion, expiracion)
+        if ok:
+            trade_open = True
+            last_trade_time = time.time()
+            current_expiration = expiracion
+            msg = f"""🎯 **OPERACIÓN ABIERTA**
+Activo: `{par}`
+Dirección: `{direccion.upper()}` (INVERTIDA)
+Monto: `${AMOUNT}`
+Expiración: {expiracion} minutos
+ID: `{id_op}`"""
+            print(msg)
+            send_telegram(msg)
+            return True
+        else:
+            print(f"❌ Falló operación en {par}: {id_op}")
+            send_telegram(f"❌ FALLÓ APERTURA | {par} | {direccion.upper()}")
+            return False
+    except Exception as e:
+        print(f"❌ Error al operar: {str(e)}")
+        send_telegram(f"❌ ERROR DE EJECUCIÓN: {str(e)}")
+        return False
 
-        if not bot_active:
-            time.sleep(1)
-            continue
+# ================= BUCLE PRINCIPAL =================
+if __name__ == "__main__":
+    if not EMAIL or not PASSWORD:
+        print("❌ Define las variables de entorno IQ_EMAIL y IQ_PASSWORD")
+        sys.exit(1)
 
-        if trade_open:
-            if time.time() - last_trade_time > current_expiration * 60:
-                trade_open = False
-            else:
+    iq = conectar_iq()
+    print("🔍 Iniciando análisis de activos OTC...")
+
+    while True:
+        try:
+            check_telegram_commands()
+            if not bot_active:
+                time.sleep(2)
+                continue
+
+            # Esperar fin de vela para evitar señales incompletas
+            servidor_tiempo = int(iq.get_server_timestamp())
+            if servidor_tiempo % 60 < 55:
+                time.sleep(0.3)
+                continue
+
+            # Liberar estado si ya venció la operación anterior
+            if trade_open:
+                if time.time() - last_trade_time > (current_expiration * 60) + 10:
+                    trade_open = False
+                    print("✅ Operación finalizada, listo para nueva señal")
                 time.sleep(1)
                 continue
 
-        t = int(iq.get_server_timestamp())
+            # Analizar cada activo
+            for par in PAIRS:
+                df_m1 = get_data(iq, par, TF_M1)
+                df_m5 = get_data(iq, par, TF_M5)
+                df_htf = get_data(iq, par, TF_HTF)
 
-        # Espera hasta los últimos segundos de la vela
-        if t % 60 < 55:
-            time.sleep(0.2)
-            continue
+                if not all([df_m1, df_m5, df_htf]):
+                    continue
 
-        for pair in PAIRS:
+                # Obtener señal e INVERTIRLA como pediste
+                señal_original, expiracion = pro_signal(df_m1, df_m5, df_htf)
+                if señal_original:
+                    señal_final = "put" if señal_original.lower() == "call" else "call"
+                    abrir_operacion(iq, par, señal_final, expiracion)
+                    break  # Una operación por ciclo
 
-            df_m1 = get_candles(pair, 60)
-            df_m5 = get_candles(pair, 300)
-            df_h3 = get_candles(pair, 900)
+            time.sleep(2)
 
-            if df_m1 is None or df_m5 is None or df_h3 is None:
-                continue
-
-            # ✅ AQUÍ SE INVIERTE LA SEÑAL (única modificación lógica)
-            signal_original, expiration = pro_signal(df_m1, df_m5, df_h3)
-            
-            if signal_original:
-                # Invierte la dirección: call ↔ put
-                signal = "put" if signal_original.lower() == "call" else "call"
-                trade(pair, signal, expiration)
-                break
-
-        time.sleep(1)
-
-    except Exception as e:
-        print("Error:", e)
-        time.sleep(1)
+        except Exception as e:
+            print(f"❌ Error en bucle: {str(e)}")
+            send_telegram(f"⚠️ ERROR EN BOT: {str(e)}")
+            time.sleep(5)
