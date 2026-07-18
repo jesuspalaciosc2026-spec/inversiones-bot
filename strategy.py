@@ -96,9 +96,7 @@ def pro_signal(df_m1, df_m5, df_htf):
 
                 # ⚡ entrada rápida si está muy cerca
                 if abs(price - support) <= atr:
-                    return "call", 2
-
-                return "call", 3
+                   return "call", 3
 
     # ========= RESISTENCIA =========
 
@@ -107,8 +105,6 @@ def pro_signal(df_m1, df_m5, df_htf):
             if confirmation(df_m1, "put"):
 
                 if abs(price - resistance) <= atr:
-                    return "put", 2
-
-                return "put", 3
+                     return "put", 3
 
     return None, None
