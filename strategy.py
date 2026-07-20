@@ -86,7 +86,7 @@ def pro_signal(df_m1, df_m5, df_htf):
         return None, None
 
     # 🔥 buffer más flexible
-    buffer = atr * 1.3
+    buffer = atr * 1.9
 
     # ========= SOPORTE =========
 
