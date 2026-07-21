@@ -1,105 +1,72 @@
 import numpy as np
 
-# ================= INDICADORES =================
+# ================= LÓGICA ÚNICA: MOMENTO + CONTINUIDAD =================
 
-def add_indicators(df):
-    df = df.copy()
+def vela_momento(vela):
+    """Vela de Momento: cuerpo > 60% del rango total, dirección clara"""
+    cuerpo = abs(vela["close"] - vela["open"])
+    rango = vela["high"] - vela["low"]
+    if rango == 0:
+        return None
+    
+    es_alcista = vela["close"] > vela["open"]
+    es_bajista = vela["close"] < vela["open"]
+    cuerpo_fuerte = cuerpo > (rango * 0.6)
 
-    # EMA 20
-    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
-
-    # ATR 14
-    high_low = df["high"] - df["low"]
-    high_close = abs(df["high"] - df["close"].shift())
-    low_close = abs(df["low"] - df["close"].shift())
-
-    df["tr"] = np.maximum(high_low, np.maximum(high_close, low_close))
-    df["atr"] = df["tr"].rolling(14).mean()
-
-    return df
-
-
-# ================= ZONA HTF =================
-
-def get_zone(df_htf):
-    highs = df_htf["high"].rolling(20).max()
-    lows = df_htf["low"].rolling(20).min()
-
-    resistance = highs.iloc[-1]
-    support = lows.iloc[-1]
-
-    return support, resistance
+    if es_alcista and cuerpo_fuerte:
+        return "alcista"
+    if es_bajista and cuerpo_fuerte:
+        return "bajista"
+    return None
 
 
-# ================= TOQUE FLEXIBLE =================
+def vela_continuidad(vela_actual, vela_anterior, direccion_momento):
+    """Vela de Continuidad: respeta la dirección y cierra a favor"""
+    cuerpo = abs(vela_actual["close"] - vela_actual["open"])
+    rango = vela_actual["high"] - vela_actual["low"]
+    if rango == 0:
+        return False
 
-def double_touch(df_m5, level, is_support=True):
-    touches = 0
-
-    for i in range(-10, 0):
-        candle = df_m5.iloc[i]
-
-        if is_support:
-            if candle["low"] <= level:
-                touches += 1
-        else:
-            if candle["high"] >= level:
-                touches += 1
-
-    # 🔥 antes era >= 2 (muy estricto)
-    return touches >= 1
-
-
-# ================= CONFIRMACIÓN MEJORADA =================
-
-def confirmation(df_m1, direction):
-    last = df_m1.iloc[-1]
-    prev = df_m1.iloc[-2]
-
-    body = abs(last["close"] - last["open"])
-    range_ = last["high"] - last["low"]
-
-    strong = body > (range_ * 0.5)
-
-    if direction == "call":
-        return last["close"] > last["open"] and strong and last["close"] > prev["close"]
-
-    if direction == "put":
-        return last["close"] < last["open"] and strong and last["close"] < prev["close"]
-
+    if direccion_momento == "alcista":
+        return (vela_actual["close"] > vela_actual["open"] 
+                and vela_actual["close"] > vela_anterior["close"]
+                and cuerpo > (rango * 0.4))
+    
+    if direccion_momento == "bajista":
+        return (vela_actual["close"] < vela_actual["open"] 
+                and vela_actual["close"] < vela_anterior["close"]
+                and cuerpo > (rango * 0.4))
+    
     return False
 
 
-# ================= SEÑAL =================
+# ================= FUNCIÓN DE SEÑAL FINAL =================
 
-def pro_signal(df_m1, df_m5, df_htf):
-
-    if len(df_htf) < 20:
+def pro_signal(df_m1, df_m5=None, df_htf=None):
+    """Solo requiere velas M1; los demás parámetros se mantienen por compatibilidad"""
+    min_velas = 3
+    if len(df_m1) < min_velas:
         return None, None
 
-    support, resistance = get_zone(df_htf)
+    # Tomamos últimas 3 velas: [-3] Momento, [-2] Continuidad, [-1] validación final
+    vela_m = df_m1.iloc[-3]
+    vela_c = df_m1.iloc[-2]
+    vela_confirmacion = df_m1.iloc[-1]
 
-    price = df_m1["close"].iloc[-1]
-    atr = df_m1["atr"].iloc[-1]
-
-    if np.isnan(atr):
+    # 1. PRIMERA CONFIRMACIÓN: Vela de Momento
+    direccion = vela_momento(vela_m)
+    if not direccion:
         return None, None
 
-    # 🔥 buffer más flexible
-    buffer = atr * 1.9
+    # 2. SEGUNDA CONFIRMACIÓN: Vela de Continuidad
+    if not vela_continuidad(vela_c, vela_m, direccion):
+        return None, None
 
-    # ========= SOPORTE =========
+    # Validación extra: la última vela no rompe la estructura
+    if direccion == "alcista" and vela_confirmacion["close"] < vela_c["close"]:
+        return None, None
+    if direccion == "bajista" and vela_confirmacion["close"] > vela_c["close"]:
+        return None, None
 
-    if abs(price - support) <= buffer:
-        if double_touch(df_m5, support, True):
-            if confirmation(df_m1, "call"):
-                return "call", 1
-
-    # ========= RESISTENCIA =========
-
-    if abs(price - resistance) <= buffer:
-        if double_touch(df_m5, resistance, False):
-            if confirmation(df_m1, "put"):
-                return "put", 1
-
-    return None, None
+    # Señal final
+    return ("call", 1) if direccion == "alcista" else ("put", 1)
