@@ -19,10 +19,10 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 AMOUNT = 7000
 
 PAIRS = [
-    "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "EURGBP-OTC",
-    "EURJPY-OTC"
+    "EURUSD",
+    "GBPUSD",
+    "EURGBP",
+    "EURJPY"
 ]
 
 trade_open = False
