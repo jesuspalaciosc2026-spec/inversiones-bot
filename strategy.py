@@ -93,7 +93,7 @@ def pro_signal(df_m1, df_m5, df_htf):
     if abs(price - support) <= buffer:
         if double_touch(df_m5, support, True):
             if confirmation(df_m1, "call"):
-                return "call", 6
+                return "call", 1
 
     # ========= RESISTENCIA =========
 
