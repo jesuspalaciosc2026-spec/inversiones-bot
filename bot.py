@@ -16,11 +16,12 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 1000
+AMOUNT = 7000
 
 PAIRS = [
     "EURUSD-OTC",
     "GBPUSD-OTC",
+    "EURGBP-OTC",
     "EURJPY-OTC"
 ]
 
