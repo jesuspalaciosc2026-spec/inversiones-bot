@@ -1,9 +1,9 @@
 import numpy as np
 
-# ================= LÓGICA ÚNICA: MOMENTO + CONTINUIDAD =================
+# ================= DEFINICIÓN DE VELAS (REGLAS INTACTAS) =================
 
 def vela_momento(vela):
-    """Vela de Momento: cuerpo > 60% del rango total, dirección clara"""
+    """Vela de Momento: cuerpo > 60% del rango, dirección clara"""
     cuerpo = abs(vela["close"] - vela["open"])
     rango = vela["high"] - vela["low"]
     if rango == 0:
@@ -16,12 +16,12 @@ def vela_momento(vela):
     if es_alcista and cuerpo_fuerte:
         return "alcista"
     if es_bajista and cuerpo_fuerte:
-        return "bajista"
+        return None
     return None
 
 
 def vela_continuidad(vela_actual, vela_anterior, direccion_momento):
-    """Vela de Continuidad: respeta la dirección y cierra a favor"""
+    """Vela de Continuidad: sigue la dirección y cierra a favor"""
     cuerpo = abs(vela_actual["close"] - vela_actual["open"])
     rango = vela_actual["high"] - vela_actual["low"]
     if rango == 0:
@@ -40,33 +40,37 @@ def vela_continuidad(vela_actual, vela_anterior, direccion_momento):
     return False
 
 
-# ================= FUNCIÓN DE SEÑAL FINAL =================
+# ================= SEÑAL CONFIRMADA EN M15 + M5 =================
 
-def pro_signal(df_m1, df_m5=None, df_htf=None):
-    """Solo requiere velas M1; los demás parámetros se mantienen por compatibilidad"""
-    min_velas = 3
-    if len(df_m1) < min_velas:
+def pro_signal(df_m1, df_m5, df_m15):
+    """
+    Orden de confirmación:
+    1. M15: Vela de Momento (fuerza estructural)
+    2. M5: Vela de Continuidad (sigue la dirección)
+    3. M1: Validación final sin romper la estructura
+    """
+    # Verificar que haya suficientes velas en cada marco
+    if len(df_m15) < 2 or len(df_m5) < 2 or len(df_m1) < 1:
         return None, None
 
-    # Tomamos últimas 3 velas: [-3] Momento, [-2] Continuidad, [-1] validación final
-    vela_m = df_m1.iloc[-3]
-    vela_c = df_m1.iloc[-2]
-    vela_confirmacion = df_m1.iloc[-1]
-
-    # 1. PRIMERA CONFIRMACIÓN: Vela de Momento
-    direccion = vela_momento(vela_m)
+    # 1️⃣ PRIMERA CONFIRMACIÓN: Vela de Momento en M15
+    vela_m15 = df_m15.iloc[-1]
+    direccion = vela_momento(vela_m15)
     if not direccion:
         return None, None
 
-    # 2. SEGUNDA CONFIRMACIÓN: Vela de Continuidad
-    if not vela_continuidad(vela_c, vela_m, direccion):
+    # 2️⃣ SEGUNDA CONFIRMACIÓN: Vela de Continuidad en M5
+    vela_m5_actual = df_m5.iloc[-1]
+    vela_m5_anterior = df_m5.iloc[-2]
+    if not vela_continuidad(vela_m5_actual, vela_m5_anterior, direccion):
         return None, None
 
-    # Validación extra: la última vela no rompe la estructura
-    if direccion == "alcista" and vela_confirmacion["close"] < vela_c["close"]:
+    # 3️⃣ VALIDACIÓN FINAL EN M1: no rompe la dirección
+    vela_m1 = df_m1.iloc[-1]
+    if direccion == "alcista" and vela_m1["close"] < vela_m5_actual["close"]:
         return None, None
-    if direccion == "bajista" and vela_confirmacion["close"] > vela_c["close"]:
+    if direccion == "bajista" and vela_m1["close"] > vela_m5_actual["close"]:
         return None, None
 
-    # Señal final
+    # ✅ SEÑAL APROBADA
     return ("call", 1) if direccion == "alcista" else ("put", 1)
