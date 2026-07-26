@@ -86,13 +86,13 @@ def pro_signal(df_m1, df_m5, df_htf):
     if abs(price - support) <= buffer:
         if double_touch(df_m5, support, True):
             if confirmation(df_m1, "call"):
-                return "call", 1h
+                return "call", 60
 
     # ========= RESISTENCIA =========
 
     if abs(price - resistance) <= buffer:
         if double_touch(df_m5, resistance, False):
             if confirmation(df_m1, "put"):
-                return "put", 1h
+                return "put", 60
 
     return None, None
