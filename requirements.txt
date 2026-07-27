@@ -1,6 +1,9 @@
+setuptools
+wheel
 git+https://github.com/iqoptionapi/iqoptionapi.git
-websocket-client==0.56
+git+https://github.com/StreamAlpha/tvdatafeed.git@main
 requests
 pandas
 numpy
 pytz
+websocket-client>=1.6.0
