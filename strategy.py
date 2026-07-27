@@ -1,108 +1,98 @@
 import numpy as np
 
-# ==============================
-# 🔹 ATR
-# ==============================
-def calculate_atr(candles, period=14):
-    trs = []
+# ================= INDICADORES =================
 
-    for i in range(1, len(candles)):
-        high = candles[i]["max"]
-        low = candles[i]["min"]
-        prev_close = candles[i - 1]["close"]
+def add_indicators(df):
+    df = df.copy()
 
-        tr = max(
-            high - low,
-            abs(high - prev_close),
-            abs(low - prev_close)
-        )
-        trs.append(tr)
+    # EMA 20
+    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
 
-    if len(trs) < period:
-        return None
+    # ATR 14
+    high_low = df["high"] - df["low"]
+    high_close = abs(df["high"] - df["close"].shift())
+    low_close = abs(df["low"] - df["close"].shift())
 
-    return sum(trs[-period:]) / period
+    df["tr"] = np.maximum(high_low, np.maximum(high_close, low_close))
+    df["atr"] = df["tr"].rolling(14).mean()
+
+    return df
 
 
-# ==============================
-# 🔹 Tendencia
-# ==============================
-def get_trend(candles):
-    closes = [c["close"] for c in candles]
+# ================= ZONA HTF =================
 
-    ma_fast = np.mean(closes[-5:])
-    ma_slow = np.mean(closes[-15:])
+def get_zone(df_htf):
+    highs = df_htf["high"].rolling(20).max()
+    lows = df_htf["low"].rolling(20).min()
 
-    if ma_fast > ma_slow:
-        return "call"
-    elif ma_fast < ma_slow:
-        return "put"
-    return None
+    resistance = highs.iloc[-1]
+    support = lows.iloc[-1]
+
+    return support, resistance
 
 
-# ==============================
-# 🔹 Lateral
-# ==============================
-def is_lateral(candles):
-    highs = [c["max"] for c in candles[-10:]]
-    lows = [c["min"] for c in candles[-10:]]
+# ================= DOBLE TEST =================
 
-    rango = max(highs) - min(lows)
+def double_touch(df_m5, level, is_support=True):
+    touches = 0
 
-    return rango < 0.0004
+    for i in range(-10, 0):
+        candle = df_m5.iloc[i]
 
+        if is_support:
+            if candle["low"] <= level:
+                touches += 1
+        else:
+            if candle["high"] >= level:
+                touches += 1
 
-# ==============================
-# 🔥 SEÑAL INDIVIDUAL
-# ==============================
-def pro_signal(candles):
-    if len(candles) < 20:
-        return None, 0
-
-    atr = calculate_atr(candles)
-    if atr is None or atr < 0.0003:
-        return None, 0
-
-    if is_lateral(candles):
-        return None, 0
-
-    trend = get_trend(candles)
-    if trend is None:
-        return None, 0
-
-    last = candles[-1]
-    prev = candles[-2]
-
-    fuerza = abs(last["close"] - prev["close"])
-
-    # breakout limpio
-    if trend == "call" and last["close"] > prev["max"]:
-        return "call", fuerza
-
-    if trend == "put" and last["close"] < prev["min"]:
-        return "put", fuerza
-
-    return None, 0
+    return touches >= 2
 
 
-# ==============================
-# 🚀 MULTI PAR PRO
-# ==============================
-def pro_signal_multi(market_data):
+# ================= CONFIRMACIÓN =================
 
-    best_pair = None
-    best_signal = None
-    best_strength = 0
+def confirmation(df_m1, direction):
+    last = df_m1.iloc[-1]
 
-    for pair, candles in market_data.items():
-        signal, strength = pro_signal(candles)
+    if direction == "call":
+        return last["close"] > last["open"]
 
-        if signal and strength > best_strength:
-            best_pair = pair
-            best_signal = signal
-            best_strength = strength
+    if direction == "put":
+        return last["close"] < last["open"]
 
-    if best_pair is None:
-        return None, None, 0
+    return False
 
-    return best_pair, best_signal, best_strength
+
+# ================= SEÑAL =================
+
+def pro_signal(df_m1, df_m5, df_htf):
+
+    if len(df_htf) < 20:
+        return None, None
+
+    support, resistance = get_zone(df_htf)
+
+    price = df_m1["close"].iloc[-1]
+    atr = df_m1["atr"].iloc[-1]
+
+    if np.isnan(atr):
+        return None, None
+
+    # Margen dinámico basado en ATR
+    buffer = atr * 1.2
+
+    # ========= SOPORTE =========
+
+    if abs(price - support) <= buffer:
+        if double_touch(df_m5, support, True):
+            if confirmation(df_m1, "call"):
+                return "call", 3
+
+    # ========= RESISTENCIA =========
+
+    if abs(price - resistance) <= buffer:
+        if double_touch(df_m5, resistance, False):
+            if confirmation(df_m1, "put"):
+                return "put", 3
+
+    return None, None
