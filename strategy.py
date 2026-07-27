@@ -5,10 +5,8 @@ import numpy as np
 def add_indicators(df):
     df = df.copy()
 
-    # EMA 20
     df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
 
-    # ATR 14
     high_low = df["high"] - df["low"]
     high_close = abs(df["high"] - df["close"].shift())
     low_close = abs(df["low"] - df["close"].shift())
@@ -21,129 +19,169 @@ def add_indicators(df):
 
 # ================= ZONAS =================
 
-def get_zone(df_htf):
-    resistance = df_htf["high"].rolling(20).max().iloc[-1]
-    support = df_htf["low"].rolling(20).min().iloc[-1]
+def get_zone(df):
+    resistance = df["high"].rolling(20).max().iloc[-1]
+    support = df["low"].rolling(20).min().iloc[-1]
     return support, resistance
 
 
-# ================= FILTRO LATERAL =================
+# ================= FILTROS =================
 
 def is_lateral(df):
     atr = df["atr"].iloc[-1]
+    high = df["high"].rolling(10).max().iloc[-1]
+    low = df["low"].rolling(10).min().iloc[-1]
 
-    rango = df["high"].rolling(10).max().iloc[-1] - df["low"].rolling(10).min().iloc[-1]
-
-    return rango < atr * 1.2
+    return (high - low) < atr * 1.5
 
 
-# ================= FUERZA TENDENCIA =================
+def strong_impulse(df):
+    last = df.iloc[-1]
+    body = abs(last["close"] - last["open"])
+    atr = df["atr"].iloc[-1]
 
-def strong_trend(df):
+    return body > atr * 0.5
+
+
+def far_from_ema(df):
     price = df["close"].iloc[-1]
     ema = df["ema20"].iloc[-1]
     atr = df["atr"].iloc[-1]
 
-    return abs(price - ema) > atr * 0.5
+    return abs(price - ema) > atr * 0.7
 
 
-# ================= DOBLE TOQUE =================
+def not_exhausted(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-def double_touch(df, level, atr, is_support=True):
-    touches = 0
+    body_last = abs(last["close"] - last["open"])
+    body_prev = abs(prev["close"] - prev["open"])
 
-    for i in range(-10, 0):
-        candle = df.iloc[i]
+    return body_last >= body_prev
 
-        if is_support:
-            if abs(candle["low"] - level) <= atr:
-                touches += 1
+
+def no_fake_breakout(df, support, resistance):
+    last = df.iloc[-1]
+
+    if last["high"] > resistance and last["close"] < resistance:
+        return False
+
+    if last["low"] < support and last["close"] > support:
+        return False
+
+    return True
+
+
+def near_zone(price, support, resistance, atr):
+    buffer = atr * 1.5
+
+    if abs(price - support) <= buffer:
+        return "support"
+
+    if abs(price - resistance) <= buffer:
+        return "resistance"
+
+    return None
+
+
+# ================= CORRELACIÓN EUR =================
+
+def euro_strength(data):
+    directions = []
+
+    for pair in ["EURUSD", "EURGBP"]:
+        df = data[pair][0]
+        if df["close"].iloc[-1] > df["open"].iloc[-1]:
+            directions.append("up")
         else:
-            if abs(candle["high"] - level) <= atr:
-                touches += 1
+            directions.append("down")
 
-    return touches >= 2
+    if directions.count("up") >= 2:
+        return "bullish"
 
+    if directions.count("down") >= 2:
+        return "bearish"
 
-# ================= HORARIO PRO =================
-
-def is_good_session():
-    import datetime
-    hour = datetime.datetime.utcnow().hour
-
-    # Londres + NY
-    return 7 <= hour <= 16
+    return None
 
 
-# ================= SEÑAL PRO =================
+# ================= MEJOR PAR =================
 
-def pro_signal(df_m1, df_m5, df_htf):
+def best_pair(data):
+    best = None
+    best_score = 0
 
-    # VALIDACIÓN DATOS
-    if len(df_m1) < 20 or len(df_m5) < 20 or len(df_htf) < 20:
-        return None, None
+    for pair, (df_m1, _, _) in data.items():
+        body = abs(df_m1["close"].iloc[-1] - df_m1["open"].iloc[-1])
+        atr = df_m1["atr"].iloc[-1]
+
+        if atr == 0 or np.isnan(atr):
+            continue
+
+        score = body / atr
+
+        if score > best_score:
+            best_score = score
+            best = pair
+
+    return best
+
+
+# ================= SEÑAL FINAL =================
+
+def pro_signal_multi(data):
+
+    # usar EURUSD como referencia
+    df_ref = add_indicators(data["EURUSD"][0])
+
+    if is_lateral(df_ref):
+        return None, None, None
+
+    if not strong_impulse(df_ref):
+        return None, None, None
+
+    if not far_from_ema(df_ref):
+        return None, None, None
+
+    if not not_exhausted(df_ref):
+        return None, None, None
+
+    eur = euro_strength(data)
+
+    if eur is None:
+        return None, None, None
+
+    pair = best_pair(data)
+
+    if pair is None:
+        return None, None, None
+
+    df_m1, _, df_htf = data[pair]
 
     df_m1 = add_indicators(df_m1)
-    df_m5 = add_indicators(df_m5)
-
-    # FILTRO HORARIO
-    if not is_good_session():
-        return None, None
-
-    # FILTRO LATERAL
-    if is_lateral(df_m1):
-        return None, None
-
-    # FILTRO TENDENCIA
-    if not strong_trend(df_m1):
-        return None, None
-
-    support, resistance = get_zone(df_htf)
 
     price = df_m1["close"].iloc[-1]
     atr = df_m1["atr"].iloc[-1]
 
-    if np.isnan(atr):
-        return None, None
+    support, resistance = get_zone(df_htf)
 
-    buffer = atr * 1.2
+    if not no_fake_breakout(df_m1, support, resistance):
+        return None, None, None
 
-    ema = df_m1["ema20"].iloc[-1]
-    trend_up = price > ema
-    trend_down = price < ema
+    zone = near_zone(price, support, resistance, atr)
+
+    if zone is None:
+        return None, None, None
 
     last = df_m1.iloc[-1]
-    body = abs(last["close"] - last["open"])
 
-    # =====================================================
-    # 🟩 CONTINUIDAD (PRIORIDAD)
-    # =====================================================
+    # ================= ENTRADA FINAL =================
 
-    if price > resistance + buffer and trend_up:
-        if last["close"] > last["open"] and body > atr * 0.4:
-            return "call", 1
+    if eur == "bullish" and last["close"] > last["open"]:
+        return pair, "call", 1
 
-    if price < support - buffer and trend_down:
-        if last["close"] < last["open"] and body > atr * 0.4:
-            return "put", 1
+    if eur == "bearish" and last["close"] < last["open"]:
+        return pair, "put", 1
 
-    # =====================================================
-    # 🟥 REVERSIÓN (SOLO SI ES MUY CLARA)
-    # =====================================================
-
-    upper_wick = last["high"] - max(last["open"], last["close"])
-    lower_wick = min(last["open"], last["close"]) - last["low"]
-
-    # SOPORTE
-    if abs(price - support) <= buffer:
-        if lower_wick > body * 1.5 and not trend_down:
-            if double_touch(df_m5, support, atr, True):
-                return "call", 1
-
-    # RESISTENCIA
-    if abs(price - resistance) <= buffer:
-        if upper_wick > body * 1.5 and not trend_up:
-            if double_touch(df_m5, resistance, atr, False):
-                return "put", 1
-
-    return None, None
+    return None, None, None
