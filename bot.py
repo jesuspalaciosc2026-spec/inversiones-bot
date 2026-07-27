@@ -8,7 +8,13 @@ import logging
 from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal
 
-from tvDatafeed import TvDatafeed, Interval
+# ================= IMPORT SEGURO TV =================
+
+try:
+    from tvdatafeed import TvDatafeed, Interval
+except Exception as e:
+    print("❌ Error cargando tvDatafeed:", e)
+    TvDatafeed = None
 
 # ================= CONFIG =================
 
@@ -80,9 +86,21 @@ def check_commands():
 
 # ================= TRADINGVIEW =================
 
-tv = TvDatafeed()
+tv = None
+
+if TvDatafeed:
+    try:
+        tv = TvDatafeed()
+        print("✅ TradingView conectado")
+    except Exception as e:
+        print("❌ Error iniciando TradingView:", e)
+
 
 def get_tv_data(symbol, timeframe, n=100):
+
+    if tv is None:
+        return None
+
     try:
         if timeframe == "M1":
             interval = Interval.in_1_minute
@@ -98,16 +116,13 @@ def get_tv_data(symbol, timeframe, n=100):
             n_bars=n
         )
 
-        df = df.rename(columns={
-            "open": "open",
-            "high": "high",
-            "low": "low",
-            "close": "close"
-        })
+        if df is None or df.empty:
+            return None
 
         return df
 
-    except:
+    except Exception as e:
+        print(f"❌ Error TV {symbol}: {e}")
         return None
 
 # ================= IQ OPTION =================
@@ -116,7 +131,7 @@ iq = IQ_Option(EMAIL, PASSWORD)
 iq.connect()
 
 if not iq.check_connect():
-    print("❌ Error conexión IQ")
+    print("❌ Error conexión IQ Option")
     exit()
 
 iq.change_balance("PRACTICE")
@@ -129,10 +144,7 @@ send("🔥 BOT ACTIVO (DATOS REALES)")
 def trade(pair, direction, expiration):
     global trade_open, last_trade_time, current_expiration
 
-    # IQ usa nombres distintos
-    iq_pair = pair
-
-    status, _ = iq.buy(AMOUNT, iq_pair, direction, expiration)
+    status, _ = iq.buy(AMOUNT, pair, direction, expiration)
 
     if status:
         trade_open = True
@@ -142,6 +154,8 @@ def trade(pair, direction, expiration):
         msg = f"🎯 {pair} {direction.upper()} ({expiration}m)"
         print(msg)
         send(msg)
+    else:
+        print(f"❌ Error ejecutando trade en {pair}")
 
 # ================= LOOP =================
 
@@ -153,7 +167,7 @@ while True:
             time.sleep(1)
             continue
 
-        # Control operación activa
+        # ===== CONTROL TRADE ACTIVO =====
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
                 trade_open = False
@@ -174,7 +188,7 @@ while True:
             continue
 
         last_candle_time = candle_time
-        print("🕯 Nueva vela (TradingView)")
+        print("🕯 Nueva vela detectada")
 
         # ===== ANALISIS =====
         for pair in PAIRS:
@@ -186,6 +200,7 @@ while True:
             df_htf = get_tv_data(pair, "M15")
 
             if df_m1 is None or df_m5 is None or df_htf is None:
+                print(f"⚠️ Sin datos para {pair}")
                 continue
 
             signal, expiration = pro_signal(df_m1, df_m5, df_htf)
@@ -197,5 +212,5 @@ while True:
         time.sleep(1)
 
     except Exception as e:
-        print("Error:", e)
+        print("❌ Error general:", e)
         time.sleep(2)
