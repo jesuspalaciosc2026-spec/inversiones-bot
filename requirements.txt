@@ -1,5 +1,5 @@
 git+https://github.com/iqoptionapi/iqoptionapi.git
-tvdatafeed==1.2.1
+tvdatafeed==1.2.0
 requests
 pandas
 numpy
