@@ -1,22 +1,28 @@
 import numpy as np
 
 # ==============================
-# 🔹 ATR
+# 🔹 ATR (ROBUSTO)
 # ==============================
 def calculate_atr(candles, period=14):
+    if len(candles) < period + 1:
+        return None
+
     trs = []
 
     for i in range(1, len(candles)):
-        high = candles[i]["max"]
-        low = candles[i]["min"]
-        prev_close = candles[i - 1]["close"]
+        try:
+            high = candles[i]["max"]
+            low = candles[i]["min"]
+            prev_close = candles[i - 1]["close"]
 
-        tr = max(
-            high - low,
-            abs(high - prev_close),
-            abs(low - prev_close)
-        )
-        trs.append(tr)
+            tr = max(
+                high - low,
+                abs(high - prev_close),
+                abs(low - prev_close)
+            )
+            trs.append(tr)
+        except:
+            return None
 
     if len(trs) < period:
         return None
@@ -25,55 +31,91 @@ def calculate_atr(candles, period=14):
 
 
 # ==============================
-# 🔹 Tendencia
+# 🔹 TENDENCIA (MEJORADA)
 # ==============================
 def get_trend(candles):
+    if len(candles) < 20:
+        return None
+
     closes = [c["close"] for c in candles]
 
     ma_fast = np.mean(closes[-5:])
     ma_slow = np.mean(closes[-15:])
 
-    if ma_fast > ma_slow:
+    # filtro de inclinación real
+    if ma_fast > ma_slow and closes[-1] > closes[-5]:
         return "call"
-    elif ma_fast < ma_slow:
+
+    elif ma_fast < ma_slow and closes[-1] < closes[-5]:
         return "put"
+
     return None
 
 
 # ==============================
-# 🔹 Lateral
+# 🔹 MERCADO LATERAL (MEJORADO)
 # ==============================
 def is_lateral(candles):
+    if len(candles) < 15:
+        return True
+
     highs = [c["max"] for c in candles[-10:]]
     lows = [c["min"] for c in candles[-10:]]
 
     rango = max(highs) - min(lows)
 
-    return rango < 0.0004
+    # filtro dinámico
+    atr = calculate_atr(candles)
+    if atr is None:
+        return True
+
+    return rango < atr * 1.2
 
 
 # ==============================
-# 🔥 SEÑAL INDIVIDUAL
+# 🔹 IMPULSO REAL (NUEVO)
+# ==============================
+def strong_candle(candle):
+    cuerpo = abs(candle["close"] - candle["open"])
+    rango = candle["max"] - candle["min"]
+
+    if rango == 0:
+        return False
+
+    fuerza = cuerpo / rango
+    return fuerza > 0.6
+
+
+# ==============================
+# 🔥 SEÑAL INDIVIDUAL PRO
 # ==============================
 def pro_signal(candles):
     if len(candles) < 20:
         return None
 
     atr = calculate_atr(candles)
-    if atr is None or atr < 0.0003:
+
+    # ❌ sin volatilidad real
+    if atr is None or atr < 0.00025:
         return None
 
+    # ❌ lateral
     if is_lateral(candles):
         return None
 
     trend = get_trend(candles)
+
     if trend is None:
         return None
 
     last = candles[-1]
     prev = candles[-2]
 
-    # breakout limpio
+    # ❌ evitar velas débiles
+    if not strong_candle(last):
+        return None
+
+    # 🔥 breakout limpio + impulso
     if trend == "call" and last["close"] > prev["max"]:
         return "call"
 
@@ -84,29 +126,30 @@ def pro_signal(candles):
 
 
 # ==============================
-# 🚀 MULTI PAR (TU ESTRATEGIA PRO)
+# 🚀 MULTI PAR PRO REAL
 # ==============================
 def pro_signal_multi(market_data):
-    """
-    market_data = {
-        "EURUSD": candles,
-        "EURJPY": candles,
-        "EURGBP": candles
-    }
-    """
-
-    signals = {}
+    mejores = []
 
     for pair, candles in market_data.items():
-        signal = pro_signal(candles)
-        if signal:
-            signals[pair] = signal
+        try:
+            signal = pro_signal(candles)
 
-    if not signals:
+            if signal:
+                atr = calculate_atr(candles)
+                if atr:
+                    mejores.append((pair, signal, atr))
+
+        except Exception as e:
+            print(f"Error en {pair}: {e}")
+
+    # ❌ no hay señales
+    if not mejores:
         return None, None
 
-    # 🔥 elegir el mejor (más limpio)
-    best_pair = list(signals.keys())[0]
-    best_signal = signals[best_pair]
+    # 🔥 elegir el mejor (más volatilidad = mejor oportunidad)
+    mejores.sort(key=lambda x: x[2], reverse=True)
+
+    best_pair, best_signal, _ = mejores[0]
 
     return best_pair, best_signal
