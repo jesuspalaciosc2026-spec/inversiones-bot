@@ -30,11 +30,8 @@ AMOUNT = 1800
 
 PAIRS = [
     "EURUSD",
-    "GBPUSD",
     "EURJPY",
-    "USDCHF",
-    "EURGBP",
-    "USDJPY"
+    "EURGBP"
 ]
 
 # ================= ESTADO =================
