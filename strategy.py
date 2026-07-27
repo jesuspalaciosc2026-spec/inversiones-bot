@@ -19,13 +19,32 @@ def add_indicators(df):
     return df
 
 
-# ================= ZONA HTF =================
+# ================= ZONAS =================
 
 def get_zone(df_htf):
-    highs = df_htf["high"].rolling(20).max()
-    lows = df_htf["low"].rolling(20).min()
+    resistance = df_htf["high"].rolling(20).max().iloc[-1]
+    support = df_htf["low"].rolling(20).min().iloc[-1]
+    return support, resistance
 
-    return lows.iloc[-1], highs.iloc[-1]
+
+# ================= FILTRO LATERAL =================
+
+def is_lateral(df):
+    atr = df["atr"].iloc[-1]
+
+    rango = df["high"].rolling(10).max().iloc[-1] - df["low"].rolling(10).min().iloc[-1]
+
+    return rango < atr * 1.2
+
+
+# ================= FUERZA TENDENCIA =================
+
+def strong_trend(df):
+    price = df["close"].iloc[-1]
+    ema = df["ema20"].iloc[-1]
+    atr = df["atr"].iloc[-1]
+
+    return abs(price - ema) > atr * 0.5
 
 
 # ================= DOBLE TOQUE =================
@@ -46,38 +65,38 @@ def double_touch(df, level, atr, is_support=True):
     return touches >= 2
 
 
-# ================= FILTRO LATERAL =================
+# ================= HORARIO PRO =================
 
-def is_lateral_market(df):
-    atr = df["atr"].iloc[-1]
+def is_good_session():
+    import datetime
+    hour = datetime.datetime.utcnow().hour
 
-    recent_high = df["high"].rolling(10).max().iloc[-1]
-    recent_low = df["low"].rolling(10).min().iloc[-1]
-
-    rango = recent_high - recent_low
-
-    return rango < atr * 1.2
+    # Londres + NY
+    return 7 <= hour <= 16
 
 
-# ================= FUERZA DE TENDENCIA =================
-
-def strong_trend(df):
-    ema = df["ema20"].iloc[-1]
-    price = df["close"].iloc[-1]
-    atr = df["atr"].iloc[-1]
-
-    return abs(price - ema) > atr * 0.5
-
-
-# ================= SEÑAL PRINCIPAL =================
+# ================= SEÑAL PRO =================
 
 def pro_signal(df_m1, df_m5, df_htf):
 
-    if len(df_htf) < 20 or len(df_m1) < 20 or len(df_m5) < 10:
+    # VALIDACIÓN DATOS
+    if len(df_m1) < 20 or len(df_m5) < 20 or len(df_htf) < 20:
         return None, None
 
     df_m1 = add_indicators(df_m1)
     df_m5 = add_indicators(df_m5)
+
+    # FILTRO HORARIO
+    if not is_good_session():
+        return None, None
+
+    # FILTRO LATERAL
+    if is_lateral(df_m1):
+        return None, None
+
+    # FILTRO TENDENCIA
+    if not strong_trend(df_m1):
+        return None, None
 
     support, resistance = get_zone(df_htf)
 
@@ -85,13 +104,6 @@ def pro_signal(df_m1, df_m5, df_htf):
     atr = df_m1["atr"].iloc[-1]
 
     if np.isnan(atr):
-        return None, None
-
-    # FILTROS INTELIGENTES
-    if is_lateral_market(df_m1):
-        return None, None
-
-    if not strong_trend(df_m1):
         return None, None
 
     buffer = atr * 1.2
@@ -103,17 +115,21 @@ def pro_signal(df_m1, df_m5, df_htf):
     last = df_m1.iloc[-1]
     body = abs(last["close"] - last["open"])
 
-    # ================= CONTINUIDAD =================
+    # =====================================================
+    # 🟩 CONTINUIDAD (PRIORIDAD)
+    # =====================================================
 
     if price > resistance + buffer and trend_up:
-        if last["close"] > last["open"] and body > atr * 0.3:
+        if last["close"] > last["open"] and body > atr * 0.4:
             return "call", 1
 
     if price < support - buffer and trend_down:
-        if last["close"] < last["open"] and body > atr * 0.3:
+        if last["close"] < last["open"] and body > atr * 0.4:
             return "put", 1
 
-    # ================= REVERSIÓN =================
+    # =====================================================
+    # 🟥 REVERSIÓN (SOLO SI ES MUY CLARA)
+    # =====================================================
 
     upper_wick = last["high"] - max(last["open"], last["close"])
     lower_wick = min(last["open"], last["close"]) - last["low"]
