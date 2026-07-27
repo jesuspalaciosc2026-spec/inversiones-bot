@@ -43,70 +43,26 @@ def strong_impulse(df):
     return body > atr * 0.5
 
 
-def far_from_ema(df):
-    price = df["close"].iloc[-1]
-    ema = df["ema20"].iloc[-1]
-    atr = df["atr"].iloc[-1]
-
-    return abs(price - ema) > atr * 0.7
-
-
-def not_exhausted(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    body_last = abs(last["close"] - last["open"])
-    body_prev = abs(prev["close"] - prev["open"])
-
-    return body_last >= body_prev
-
-
-def no_fake_breakout(df, support, resistance):
-    last = df.iloc[-1]
-
-    if last["high"] > resistance and last["close"] < resistance:
-        return False
-
-    if last["low"] < support and last["close"] > support:
-        return False
-
-    return True
-
-
-def near_zone(price, support, resistance, atr):
-    buffer = atr * 1.5
-
-    if abs(price - support) <= buffer:
-        return "support"
-
-    if abs(price - resistance) <= buffer:
-        return "resistance"
-
-    return None
-
-
-# ================= CORRELACIÓN EUR =================
-
 def euro_strength(data):
-    directions = []
+    up = 0
+    down = 0
 
     for pair in ["EURUSD", "EURGBP"]:
         df = data[pair][0]
-        if df["close"].iloc[-1] > df["open"].iloc[-1]:
-            directions.append("up")
-        else:
-            directions.append("down")
 
-    if directions.count("up") >= 2:
+        if df["close"].iloc[-1] > df["open"].iloc[-1]:
+            up += 1
+        else:
+            down += 1
+
+    if up >= 2:
         return "bullish"
 
-    if directions.count("down") >= 2:
+    if down >= 2:
         return "bearish"
 
     return None
 
-
-# ================= MEJOR PAR =================
 
 def best_pair(data):
     best = None
@@ -116,7 +72,7 @@ def best_pair(data):
         body = abs(df_m1["close"].iloc[-1] - df_m1["open"].iloc[-1])
         atr = df_m1["atr"].iloc[-1]
 
-        if atr == 0 or np.isnan(atr):
+        if np.isnan(atr) or atr == 0:
             continue
 
         score = body / atr
@@ -128,23 +84,20 @@ def best_pair(data):
     return best
 
 
-# ================= SEÑAL FINAL =================
+# ================= FUNCIÓN PRINCIPAL =================
 
 def pro_signal_multi(data):
 
-    # usar EURUSD como referencia
+    if "EURUSD" not in data or "EURGBP" not in data:
+        return None, None, None
+
     df_ref = add_indicators(data["EURUSD"][0])
 
+    # FILTROS FUERTES
     if is_lateral(df_ref):
         return None, None, None
 
     if not strong_impulse(df_ref):
-        return None, None, None
-
-    if not far_from_ema(df_ref):
-        return None, None, None
-
-    if not not_exhausted(df_ref):
         return None, None, None
 
     eur = euro_strength(data)
@@ -157,27 +110,11 @@ def pro_signal_multi(data):
     if pair is None:
         return None, None, None
 
-    df_m1, _, df_htf = data[pair]
-
-    df_m1 = add_indicators(df_m1)
-
-    price = df_m1["close"].iloc[-1]
-    atr = df_m1["atr"].iloc[-1]
-
-    support, resistance = get_zone(df_htf)
-
-    if not no_fake_breakout(df_m1, support, resistance):
-        return None, None, None
-
-    zone = near_zone(price, support, resistance, atr)
-
-    if zone is None:
-        return None, None, None
+    df_m1 = add_indicators(data[pair][0])
 
     last = df_m1.iloc[-1]
 
-    # ================= ENTRADA FINAL =================
-
+    # ENTRADA FINAL
     if eur == "bullish" and last["close"] > last["open"]:
         return pair, "call", 1
 
@@ -185,3 +122,10 @@ def pro_signal_multi(data):
         return pair, "put", 1
 
     return None, None, None
+
+
+# ================= COMPATIBILIDAD (IMPORTANTE) =================
+# Esto evita errores si aún llamas pro_signal en algún lado
+
+def pro_signal(*args, **kwargs):
+    return None, None
