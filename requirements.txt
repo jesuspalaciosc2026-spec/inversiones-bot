@@ -1,7 +1,5 @@
-setuptools
-wheel
 git+https://github.com/iqoptionapi/iqoptionapi.git
-git+https://github.com/StreamAlpha/tvdatafeed.git@main
+tvdatafeed==1.2.1
 requests
 pandas
 numpy
