@@ -1,131 +1,92 @@
 import numpy as np
 
-# ================= INDICADORES =================
+# ==============================
+# 🔹 ATR (volatilidad real)
+# ==============================
+def calculate_atr(candles, period=14):
+    trs = []
 
-def add_indicators(df):
-    df = df.copy()
+    for i in range(1, len(candles)):
+        high = candles[i]["max"]
+        low = candles[i]["min"]
+        prev_close = candles[i - 1]["close"]
 
-    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
+        tr = max(
+            high - low,
+            abs(high - prev_close),
+            abs(low - prev_close)
+        )
+        trs.append(tr)
 
-    high_low = df["high"] - df["low"]
-    high_close = abs(df["high"] - df["close"].shift())
-    low_close = abs(df["low"] - df["close"].shift())
+    if len(trs) < period:
+        return None
 
-    df["tr"] = np.maximum(high_low, np.maximum(high_close, low_close))
-    df["atr"] = df["tr"].rolling(14).mean()
-
-    return df
-
-
-# ================= ZONAS =================
-
-def get_zone(df):
-    resistance = df["high"].rolling(20).max().iloc[-1]
-    support = df["low"].rolling(20).min().iloc[-1]
-    return support, resistance
-
-
-# ================= FILTROS =================
-
-def is_lateral(df):
-    atr = df["atr"].iloc[-1]
-    high = df["high"].rolling(10).max().iloc[-1]
-    low = df["low"].rolling(10).min().iloc[-1]
-
-    return (high - low) < atr * 1.5
+    return sum(trs[-period:]) / period
 
 
-def strong_impulse(df):
-    last = df.iloc[-1]
-    body = abs(last["close"] - last["open"])
-    atr = df["atr"].iloc[-1]
+# ==============================
+# 🔹 Tendencia simple
+# ==============================
+def get_trend(candles):
+    closes = [c["close"] for c in candles]
 
-    return body > atr * 0.5
+    ma_fast = np.mean(closes[-5:])
+    ma_slow = np.mean(closes[-15:])
 
-
-def euro_strength(data):
-    up = 0
-    down = 0
-
-    for pair in ["EURUSD", "EURGBP"]:
-        df = data[pair][0]
-
-        if df["close"].iloc[-1] > df["open"].iloc[-1]:
-            up += 1
-        else:
-            down += 1
-
-    if up >= 2:
-        return "bullish"
-
-    if down >= 2:
-        return "bearish"
-
+    if ma_fast > ma_slow:
+        return "up"
+    elif ma_fast < ma_slow:
+        return "down"
     return None
 
 
-def best_pair(data):
-    best = None
-    best_score = 0
+# ==============================
+# 🔹 Lateral (evitar operar)
+# ==============================
+def is_lateral(candles):
+    highs = [c["max"] for c in candles[-10:]]
+    lows = [c["min"] for c in candles[-10:]]
 
-    for pair, (df_m1, _, _) in data.items():
-        body = abs(df_m1["close"].iloc[-1] - df_m1["open"].iloc[-1])
-        atr = df_m1["atr"].iloc[-1]
+    rango = max(highs) - min(lows)
 
-        if np.isnan(atr) or atr == 0:
-            continue
-
-        score = body / atr
-
-        if score > best_score:
-            best_score = score
-            best = pair
-
-    return best
+    return rango < 0.0004  # mercado muerto
 
 
-# ================= FUNCIÓN PRINCIPAL =================
+# ==============================
+# 🔥 FUNCIÓN PRINCIPAL (PRO)
+# ==============================
+def pro_signal(candles):
+    if len(candles) < 20:
+        return None
 
-def pro_signal_multi(data):
+    atr = calculate_atr(candles)
+    if atr is None:
+        return None
 
-    if "EURUSD" not in data or "EURGBP" not in data:
-        return None, None, None
+    # ❌ evitar mercado sin movimiento
+    if atr < 0.0003:
+        return None
 
-    df_ref = add_indicators(data["EURUSD"][0])
+    # ❌ evitar lateral
+    if is_lateral(candles):
+        return None
 
-    # FILTROS FUERTES
-    if is_lateral(df_ref):
-        return None, None, None
+    trend = get_trend(candles)
+    if trend is None:
+        return None
 
-    if not strong_impulse(df_ref):
-        return None, None, None
+    last = candles[-1]
+    prev = candles[-2]
 
-    eur = euro_strength(data)
+    # ==============================
+    # 🚀 BREAKOUT REAL (tu enfoque)
+    # ==============================
+    if trend == "up":
+        if last["close"] > prev["max"]:
+            return "call"
 
-    if eur is None:
-        return None, None, None
+    if trend == "down":
+        if last["close"] < prev["min"]:
+            return "put"
 
-    pair = best_pair(data)
-
-    if pair is None:
-        return None, None, None
-
-    df_m1 = add_indicators(data[pair][0])
-
-    last = df_m1.iloc[-1]
-
-    # ENTRADA FINAL
-    if eur == "bullish" and last["close"] > last["open"]:
-        return pair, "call", 1
-
-    if eur == "bearish" and last["close"] < last["open"]:
-        return pair, "put", 1
-
-    return None, None, None
-
-
-# ================= COMPATIBILIDAD (IMPORTANTE) =================
-# Esto evita errores si aún llamas pro_signal en algún lado
-
-def pro_signal(*args, **kwargs):
-    return None, None
+    return None
