@@ -1,16 +1,17 @@
 import numpy as np
 
-
 # ================= INDICADORES =================
 
 def add_indicators(df):
     df = df.copy()
 
+    # EMA 20
     df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
 
+    # ATR 14
     high_low = df["high"] - df["low"]
-    high_close = (df["high"] - df["close"].shift()).abs()
-    low_close = (df["low"] - df["close"].shift()).abs()
+    high_close = abs(df["high"] - df["close"].shift())
+    low_close = abs(df["low"] - df["close"].shift())
 
     df["tr"] = np.maximum(high_low, np.maximum(high_close, low_close))
     df["atr"] = df["tr"].rolling(14).mean()
@@ -27,26 +28,48 @@ def get_zone(df_htf):
     return lows.iloc[-1], highs.iloc[-1]
 
 
-# ================= DOBLE TEST =================
+# ================= DOBLE TOQUE =================
 
-def double_touch(df_m5, level, atr, is_support=True):
+def double_touch(df, level, atr, is_support=True):
     touches = 0
-    tolerance = atr * 0.5
 
     for i in range(-10, 0):
-        candle = df_m5.iloc[i]
+        candle = df.iloc[i]
 
         if is_support:
-            if abs(candle["low"] - level) <= tolerance:
+            if abs(candle["low"] - level) <= atr:
                 touches += 1
         else:
-            if abs(candle["high"] - level) <= tolerance:
+            if abs(candle["high"] - level) <= atr:
                 touches += 1
 
     return touches >= 2
 
 
-# ================= SEÑAL =================
+# ================= FILTRO LATERAL =================
+
+def is_lateral_market(df):
+    atr = df["atr"].iloc[-1]
+
+    recent_high = df["high"].rolling(10).max().iloc[-1]
+    recent_low = df["low"].rolling(10).min().iloc[-1]
+
+    rango = recent_high - recent_low
+
+    return rango < atr * 1.2
+
+
+# ================= FUERZA DE TENDENCIA =================
+
+def strong_trend(df):
+    ema = df["ema20"].iloc[-1]
+    price = df["close"].iloc[-1]
+    atr = df["atr"].iloc[-1]
+
+    return abs(price - ema) > atr * 0.5
+
+
+# ================= SEÑAL PRINCIPAL =================
 
 def pro_signal(df_m1, df_m5, df_htf):
 
@@ -64,6 +87,13 @@ def pro_signal(df_m1, df_m5, df_htf):
     if np.isnan(atr):
         return None, None
 
+    # FILTROS INTELIGENTES
+    if is_lateral_market(df_m1):
+        return None, None
+
+    if not strong_trend(df_m1):
+        return None, None
+
     buffer = atr * 1.2
 
     ema = df_m1["ema20"].iloc[-1]
@@ -73,29 +103,31 @@ def pro_signal(df_m1, df_m5, df_htf):
     last = df_m1.iloc[-1]
     body = abs(last["close"] - last["open"])
 
-    # ===== CONTINUIDAD =====
+    # ================= CONTINUIDAD =================
 
     if price > resistance + buffer and trend_up:
         if last["close"] > last["open"] and body > atr * 0.3:
-            return "call", 60
+            return "call", 1
 
     if price < support - buffer and trend_down:
         if last["close"] < last["open"] and body > atr * 0.3:
-            return "put", 60
+            return "put", 1
 
-    # ===== REVERSIÓN =====
+    # ================= REVERSIÓN =================
 
     upper_wick = last["high"] - max(last["open"], last["close"])
     lower_wick = min(last["open"], last["close"]) - last["low"]
 
+    # SOPORTE
     if abs(price - support) <= buffer:
         if lower_wick > body * 1.5 and not trend_down:
             if double_touch(df_m5, support, atr, True):
-                return "call", 60
+                return "call", 1
 
+    # RESISTENCIA
     if abs(price - resistance) <= buffer:
         if upper_wick > body * 1.5 and not trend_up:
             if double_touch(df_m5, resistance, atr, False):
-                return "put", 60
+                return "put", 1
 
     return None, None
