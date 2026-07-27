@@ -6,7 +6,11 @@ import sys
 import logging
 
 from iqoptionapi.stable_api import IQ_Option
-from strategy import add_indicators, pro_signal
+from strategy import pro_signal
+
+from tvDatafeed import TvDatafeed, Interval
+
+# ================= CONFIG =================
 
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
@@ -19,16 +23,22 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 AMOUNT = 1800
 
 PAIRS = [
-    "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "EURJPY-OTC"
+    "EURUSD",
+    "GBPUSD",
+    "EURJPY",
+    "USDCHF",
+    "EURGBP",
+    "USDJPY"
 ]
+
+# ================= ESTADO =================
 
 trade_open = False
 last_trade_time = 0
 bot_active = True
 last_update_id = None
 current_expiration = 1
+last_candle_time = None
 
 # ================= TELEGRAM =================
 
@@ -39,7 +49,7 @@ def send(msg):
             data={"chat_id": CHAT_ID, "text": msg},
             timeout=5
         )
-    except Exception:
+    except:
         pass
 
 
@@ -55,7 +65,6 @@ def check_commands():
 
         for result in r.get("result", []):
             last_update_id = result["update_id"] + 1
-
             text = result.get("message", {}).get("text", "")
 
             if text == "/stop":
@@ -66,8 +75,40 @@ def check_commands():
                 bot_active = True
                 send("✅ BOT ACTIVADO")
 
-    except Exception:
+    except:
         pass
+
+# ================= TRADINGVIEW =================
+
+tv = TvDatafeed()
+
+def get_tv_data(symbol, timeframe, n=100):
+    try:
+        if timeframe == "M1":
+            interval = Interval.in_1_minute
+        elif timeframe == "M5":
+            interval = Interval.in_5_minute
+        else:
+            interval = Interval.in_15_minute
+
+        df = tv.get_hist(
+            symbol=symbol,
+            exchange="FX_IDC",
+            interval=interval,
+            n_bars=n
+        )
+
+        df = df.rename(columns={
+            "open": "open",
+            "high": "high",
+            "low": "low",
+            "close": "close"
+        })
+
+        return df
+
+    except:
+        return None
 
 # ================= IQ OPTION =================
 
@@ -75,31 +116,23 @@ iq = IQ_Option(EMAIL, PASSWORD)
 iq.connect()
 
 if not iq.check_connect():
-    print("❌ Error de conexión con IQ Option")
+    print("❌ Error conexión IQ")
     exit()
 
 iq.change_balance("PRACTICE")
 
-print("🔥 BOT ACTIVO")
-send("🔥 BOT ACTIVO")
-
-# ================= DATOS =================
-
-def get_candles(pair, tf):
-    try:
-        data = iq.get_candles(pair, tf, 100, time.time())
-        df = pd.DataFrame(data)
-        df.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        return add_indicators(df)
-    except Exception:
-        return None
+print("🔥 BOT ACTIVO (DATOS REALES)")
+send("🔥 BOT ACTIVO (DATOS REALES)")
 
 # ================= TRADE =================
 
 def trade(pair, direction, expiration):
     global trade_open, last_trade_time, current_expiration
 
-    status, _ = iq.buy(AMOUNT, pair, direction, expiration)
+    # IQ usa nombres distintos
+    iq_pair = pair
+
+    status, _ = iq.buy(AMOUNT, iq_pair, direction, expiration)
 
     if status:
         trade_open = True
@@ -109,10 +142,8 @@ def trade(pair, direction, expiration):
         msg = f"🎯 {pair} {direction.upper()} ({expiration}m)"
         print(msg)
         send(msg)
-    else:
-        print(f"❌ No se pudo abrir operación en {pair}")
 
-# ================= LOOP PRINCIPAL =================
+# ================= LOOP =================
 
 while True:
     try:
@@ -122,6 +153,7 @@ while True:
             time.sleep(1)
             continue
 
+        # Control operación activa
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
                 trade_open = False
@@ -129,23 +161,34 @@ while True:
                 time.sleep(1)
                 continue
 
-        t = int(iq.get_server_timestamp())
+        # ===== CONTROL DE VELA =====
+        current_time = int(time.time())
+        candle_time = current_time - (current_time % 60)
 
-        # Espera hasta los últimos segundos de la vela
-        if t % 60 < 55:
-            time.sleep(0.2)
+        if candle_time == last_candle_time:
+            time.sleep(0.5)
             continue
 
+        if current_time % 60 < 58:
+            time.sleep(0.5)
+            continue
+
+        last_candle_time = candle_time
+        print("🕯 Nueva vela (TradingView)")
+
+        # ===== ANALISIS =====
         for pair in PAIRS:
 
-            df_m1 = get_candles(pair, 60)
-            df_m5 = get_candles(pair, 300)
-            df_h3 = get_candles(pair, 900)
+            print(f"🔎 Analizando {pair}")
 
-            if df_m1 is None or df_m5 is None or df_h3 is None:
+            df_m1 = get_tv_data(pair, "M1")
+            df_m5 = get_tv_data(pair, "M5")
+            df_htf = get_tv_data(pair, "M15")
+
+            if df_m1 is None or df_m5 is None or df_htf is None:
                 continue
 
-            signal, expiration = pro_signal(df_m1, df_m5, df_h3)
+            signal, expiration = pro_signal(df_m1, df_m5, df_htf)
 
             if signal:
                 trade(pair, signal, expiration)
@@ -155,4 +198,4 @@ while True:
 
     except Exception as e:
         print("Error:", e)
-        time.sleep(1)
+        time.sleep(2)
