@@ -1,98 +1,120 @@
 import numpy as np
+from datetime import datetime
 
-# ================= INDICADORES =================
+# ================= INDICADORES (NO SE USAN PERO SE MANTIENE POR TU BOT) =================
 
 def add_indicators(df):
-    df = df.copy()
-
-    # EMA 20
-    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
-
-    # ATR 14
-    high_low = df["high"] - df["low"]
-    high_close = abs(df["high"] - df["close"].shift())
-    low_close = abs(df["low"] - df["close"].shift())
-
-    df["tr"] = np.maximum(high_low, np.maximum(high_close, low_close))
-    df["atr"] = df["tr"].rolling(14).mean()
-
     return df
 
 
-# ================= ZONA HTF =================
+# ================= DETECTAR PATRÓN =================
 
-def get_zone(df_htf):
-    highs = df_htf["high"].rolling(20).max()
-    lows = df_htf["low"].rolling(20).min()
+def detect_trendline_pattern(df):
 
-    resistance = highs.iloc[-1]
-    support = lows.iloc[-1]
+    c1 = df.iloc[-3]
+    c2 = df.iloc[-2]
+    c3 = df.iloc[-1]
 
-    return support, resistance
+    # ================= COMPRA =================
+    if (
+        c1["close"] > c1["open"] and
+        c2["close"] > c2["open"] and
+        c3["close"] > c3["open"]
+    ):
+
+        low1 = c1["low"]
+        low2 = c2["low"]
+
+        if low1 < low2:
+            return "call", low1, low2, -3, -2
+
+    # ================= VENTA =================
+    if (
+        c1["close"] < c1["open"] and
+        c2["close"] < c2["open"] and
+        c3["close"] < c3["open"]
+    ):
+
+        high1 = c1["high"]
+        high2 = c2["high"]
+
+        if high1 > high2:
+            return "put", high1, high2, -3, -2
+
+    return None, None, None, None, None
 
 
-# ================= DOBLE TEST =================
+# ================= PROYECTAR LÍNEA =================
 
-def double_touch(df_m5, level, is_support=True):
-    touches = 0
+def project_line(p1, p2, i1, i2, current_index):
 
-    for i in range(-10, 0):
-        candle = df_m5.iloc[i]
+    slope = (p2 - p1) / (i2 - i1)
+    projected = p2 + slope * (current_index - i2)
 
-        if is_support:
-            if candle["low"] <= level:
-                touches += 1
-        else:
-            if candle["high"] >= level:
-                touches += 1
-
-    return touches >= 2
+    return projected
 
 
-# ================= CONFIRMACIÓN =================
+# ================= TOQUE EN M1 =================
 
-def confirmation(df_m1, direction):
+def touch_line(df_m1, line_price):
+
     last = df_m1.iloc[-1]
 
-    if direction == "call":
-        return last["close"] > last["open"]
-
-    if direction == "put":
-        return last["close"] < last["open"]
-
-    return False
+    return last["low"] <= line_price <= last["high"]
 
 
-# ================= SEÑAL =================
+# ================= TIEMPO EXPIRACIÓN =================
+
+def time_to_close_m5(timestamp):
+
+    dt = datetime.fromtimestamp(timestamp)
+    minute = dt.minute
+
+    remaining = 5 - (minute % 5)
+
+    return remaining
+
+
+# ================= FUNCIÓN PRINCIPAL =================
 
 def pro_signal(df_m1, df_m5, df_htf):
 
-    if len(df_htf) < 20:
+    # timestamp actual (usamos última vela M1)
+    current_timestamp = df_m1["from"].iloc[-1]
+
+    direction, p1, p2, i1, i2 = detect_trendline_pattern(df_m5)
+
+    if direction is None:
         return None, None
 
-    support, resistance = get_zone(df_htf)
+    current_index = len(df_m5) - 1
+    price = df_m5["close"].iloc[-1]
 
-    price = df_m1["close"].iloc[-1]
-    atr = df_m1["atr"].iloc[-1]
+    line_price = project_line(p1, p2, i1, i2, current_index)
 
-    if np.isnan(atr):
-        return None, None
+    # ================= COMPRA =================
+    if direction == "call":
 
-    # Margen dinámico basado en ATR
-    buffer = atr * 1.2
+        # precio debe estar arriba
+        if price <= line_price:
+            return None, None
 
-    # ========= SOPORTE =========
+        # esperar toque en M1
+        if touch_line(df_m1, line_price):
 
-    if abs(price - support) <= buffer:
-        if double_touch(df_m5, support, True):
-            if confirmation(df_m1, "call"):
-                return "call", 3
+            expiration = time_to_close_m5(current_timestamp)
+            return "call", expiration
 
-    # ========= RESISTENCIA =========
+    # ================= VENTA =================
+    if direction == "put":
 
-    if abs(price - resistance) <= buffer:
-        if double_touch(df_m5, resistance, False):
-            if confirmation(df_m1, "put"):
-                return "put", 3
+        # precio debe estar abajo
+        if price >= line_price:
+            return None, None
+
+        if touch_line(df_m1, line_price):
+
+            expiration = time_to_close_m5(current_timestamp)
+            return "put", expiration
 
     return None, None
