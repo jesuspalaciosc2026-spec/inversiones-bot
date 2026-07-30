@@ -21,6 +21,8 @@ AMOUNT = 20
 PAIRS = [
     "EURUSD-OTC",
     "GBPUSD-OTC",
+    "EURGBP-OTC",
+    "USDCHF-OTC",
     "EURJPY-OTC"
 ]
 
