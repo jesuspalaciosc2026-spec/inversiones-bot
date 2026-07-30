@@ -1,10 +1,26 @@
 import numpy as np
 from datetime import datetime
 
-# ================= INDICADORES (NO SE USAN PERO SE MANTIENE POR TU BOT) =================
+# ================= INDICADORES =================
 
 def add_indicators(df):
     return df
+
+
+# ================= LATERALIDAD =================
+
+def is_lateral(df_m5):
+
+    recent = df_m5.tail(10)
+
+    high = recent["high"].max()
+    low = recent["low"].min()
+
+    range_total = high - low
+
+    avg_candle = (recent["high"] - recent["low"]).mean()
+
+    return range_total <= avg_candle * 3
 
 
 # ================= DETECTAR PATRÓN =================
@@ -79,7 +95,11 @@ def time_to_close_m5(timestamp):
 
 def pro_signal(df_m1, df_m5, df_htf):
 
-    # timestamp actual (usamos última vela M1)
+    # 1. FILTRO: SOLO MERCADO LATERAL
+    if not is_lateral(df_m5):
+        return None, None
+
+    # timestamp actual desde M1
     current_timestamp = df_m1["from"].iloc[-1]
 
     direction, p1, p2, i1, i2 = detect_trendline_pattern(df_m5)
@@ -95,11 +115,9 @@ def pro_signal(df_m1, df_m5, df_htf):
     # ================= COMPRA =================
     if direction == "call":
 
-        # precio debe estar arriba
         if price <= line_price:
             return None, None
 
-        # esperar toque en M1
         if touch_line(df_m1, line_price):
 
             expiration = time_to_close_m5(current_timestamp)
@@ -108,7 +126,6 @@ def pro_signal(df_m1, df_m5, df_htf):
     # ================= VENTA =================
     if direction == "put":
 
-        # precio debe estar abajo
         if price >= line_price:
             return None, None
 
