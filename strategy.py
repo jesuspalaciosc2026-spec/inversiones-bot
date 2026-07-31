@@ -55,6 +55,17 @@ def near_ema(df):
     return distance < avg_range
 
 
+def too_far_from_ema(df):
+
+    last = df.iloc[-1]
+    ema = df["ema20"].iloc[-1]
+
+    distance = abs(last["close"] - ema)
+    avg_range = (df["high"] - df["low"]).mean()
+
+    return distance > avg_range * 2
+
+
 # ================= LIQUIDEZ =================
 
 def liquidity_sweep(df):
@@ -69,6 +80,39 @@ def liquidity_sweep(df):
         return True
 
     return False
+
+
+# ================= RECHAZO =================
+
+def institutional_rejection(df):
+
+    last = df.iloc[-1]
+
+    upper = last["high"] - max(last["close"], last["open"])
+    lower = min(last["close"], last["open"]) - last["low"]
+    body = abs(last["close"] - last["open"])
+
+    return upper > body * 2 or lower > body * 2
+
+
+# ================= AGOTAMIENTO =================
+
+def exhaustion(df):
+
+    recent = df.tail(5)
+
+    total_body = 0
+    total_range = 0
+
+    for i in range(len(recent)):
+        candle = recent.iloc[i]
+        total_body += abs(candle["close"] - candle["open"])
+        total_range += candle["high"] - candle["low"]
+
+    if total_range == 0:
+        return False
+
+    return (total_body / total_range) < 0.4
 
 
 # ================= PULLBACK =================
@@ -137,6 +181,45 @@ def continuation_candle(df, trend):
     return False
 
 
+# ================= COMPRESIÓN =================
+
+def compression_zone(df):
+
+    recent = df.tail(5)
+
+    total = 0
+    for i in range(len(recent)):
+        total += (recent.iloc[i]["high"] - recent.iloc[i]["low"])
+
+    avg = total / 5
+    overall = recent["high"].max() - recent["low"].min()
+
+    return overall < avg * 2
+
+
+# ================= RUPTURA =================
+
+def breakout_candle(df, trend):
+
+    last = df.iloc[-1]
+
+    body = abs(last["close"] - last["open"])
+    full = last["high"] - last["low"]
+
+    if full == 0:
+        return False
+
+    strength = body / full
+
+    if trend == "call":
+        return last["close"] > last["open"] and strength > 0.6
+
+    if trend == "put":
+        return last["close"] < last["open"] and strength > 0.6
+
+    return False
+
+
 # ================= FUNCIÓN PRINCIPAL =================
 
 def pro_signal(df_m1):
@@ -149,43 +232,59 @@ def pro_signal(df_m1):
     score = 0
 
     # 1. tendencia
-    trend, trend_score = trend_strength(df)
-    score += trend_score
+    trend, t_score = trend_strength(df)
+    score += t_score
 
     if trend is None:
         return None, None
 
-    # 2. evitar sobreextensión
+    # 2. filtros base
     if avoid_overextension(df):
         score += 10
 
-    # 3. cerca EMA
-    if near_ema(df):
-        score += 15
+    if not too_far_from_ema(df):
+        score += 10
 
-    # 4. evitar trampa
     if not liquidity_sweep(df):
         score += 10
 
-    # 5. pullback
+    if not institutional_rejection(df):
+        score += 10
+
+    if not exhaustion(df):
+        score += 10
+
+    # 3. estructura
     if detect_pullback(df, trend):
         score += 15
     else:
         return None, None
 
-    # 6. pullback débil
     if weak_pullback(df):
-        score += 20
+        score += 15
 
-    # 7. confirmación
+    if near_ema(df):
+        score += 10
+
     if continuation_candle(df, trend):
-        score += 20
+        score += 10
     else:
         return None, None
 
-    # 🔥 DECISIÓN FINAL
+    # 🔥 TIMING PERFECTO
+    if compression_zone(df):
+        score += 10
+    else:
+        return None, None
+
+    if breakout_candle(df, trend):
+        score += 10
+    else:
+        return None, None
+
+    # 🎯 DECISIÓN FINAL
     if score >= 80:
-        print(f"✅ SCORE: {score}")
+        print(f"🔥 ENTRY SNIPER | SCORE: {score}")
         return trend, 1
 
     print(f"❌ SCORE BAJO: {score}")
