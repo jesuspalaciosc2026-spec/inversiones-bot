@@ -6,7 +6,7 @@ import sys
 import logging
 
 from iqoptionapi.stable_api import IQ_Option
-from strategy import add_indicators, pro_signal
+from strategy import pro_signal
 
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
@@ -16,7 +16,7 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 2000
+AMOUNT = 20000
 
 PAIRS = [
     "EURUSD-OTC",
@@ -72,6 +72,12 @@ def check_commands():
     except Exception:
         pass
 
+# ================= HORARIO =================
+
+def is_good_time():
+    hour = time.gmtime().tm_hour
+    return 12 <= hour <= 22
+
 # ================= IQ OPTION =================
 
 iq = IQ_Option(EMAIL, PASSWORD)
@@ -93,7 +99,7 @@ def get_candles(pair, tf):
         data = iq.get_candles(pair, tf, 50, time.time())
         df = pd.DataFrame(data)
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        return add_indicators(df)
+        return df
     except Exception:
         return None
 
@@ -115,7 +121,7 @@ def trade(pair, direction, expiration):
     else:
         print(f"❌ No se pudo abrir operación en {pair}")
 
-# ================= LOOP PRINCIPAL =================
+# ================= LOOP =================
 
 while True:
     try:
@@ -125,7 +131,10 @@ while True:
             time.sleep(1)
             continue
 
-        # Esperar a que termine operación
+        if not is_good_time():
+            time.sleep(5)
+            continue
+
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
                 trade_open = False
@@ -140,20 +149,19 @@ while True:
             if df_m1 is None or len(df_m1) < 10:
                 continue
 
-            # 🔥 CONTROL DE UNA ENTRADA POR VELA
             current_candle = df_m1["from"].iloc[-1]
 
             if last_candle_time.get(pair) == current_candle:
                 continue
 
-            signal, expiration = pro_signal(df_m1, None, None)
+            signal, expiration = pro_signal(df_m1)
 
             if signal:
                 trade(pair, signal, expiration)
                 last_candle_time[pair] = current_candle
                 break
 
-        time.sleep(0.5)
+        time.sleep(1)
 
     except Exception as e:
         print("Error:", e)
