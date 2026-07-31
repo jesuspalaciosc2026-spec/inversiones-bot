@@ -33,7 +33,7 @@ last_update_id = None
 current_expiration = 1
 last_candle_time = {}
 
-# 🔥 NUEVO
+# 🔥 CONTROL DE OPERACIONES
 trade_count = 0
 MAX_TRADES = 15
 
@@ -116,6 +116,8 @@ def trade(pair, direction, expiration):
         msg = f"🎯 {pair} {direction.upper()} ({expiration}m) | #{trade_count}"
         print(msg)
         send(msg)
+    else:
+        print(f"❌ No se pudo abrir operación en {pair}")
 
 # ================= LOOP =================
 
@@ -133,6 +135,7 @@ while True:
             print("STOP 15 TRADES")
             break
 
+        # ⏳ Esperar cierre de operación
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
                 trade_open = False
@@ -140,27 +143,20 @@ while True:
                 time.sleep(1)
                 continue
 
-        # 🔥 NUEVA VELA
-        t = int(iq.get_server_timestamp())
-        if t % 60 > 5:
-            time.sleep(0.2)
-            continue
-
         for pair in PAIRS:
 
             df_m1 = get_candles(pair, 60)
-            df_m5 = get_candles(pair, 300)
-            df_1s = get_candles(pair, 1)
 
-            if df_1s is None or len(df_1s) < 10:
+            if df_m1 is None or len(df_m1) < 10:
                 continue
 
             current_candle = df_m1["from"].iloc[-1]
 
+            # 🔥 SOLO UNA VEZ POR VELA
             if last_candle_time.get(pair) == current_candle:
                 continue
 
-            signal, expiration = pro_signal(df_m1, df_m5, df_1s)
+            signal, expiration = pro_signal(df_m1)
 
             if signal:
                 trade(pair, signal, expiration)
