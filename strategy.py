@@ -2,36 +2,36 @@ import numpy as np
 
 # ================= MICRO FLOW =================
 
-def micro_flow(df_1s):
-    closes = df_1s["close"].values
+def micro_flow(df):
+    closes = df["close"].values
 
     up_moves = 0
     down_moves = 0
     rejections = 0
-    speed = 0
+    strength = 0
 
     for i in range(1, len(closes)):
 
-        diff = closes[i] - closes[i-1]
+        diff = closes[i] - closes[i - 1]
 
+        # conteo de dirección
         if diff > 0:
             up_moves += 1
         elif diff < 0:
             down_moves += 1
 
-        # cambios de dirección (rechazos)
+        # rechazo (cambio de dirección)
         if i > 1:
-            prev_diff = closes[i-1] - closes[i-2]
-            if prev_diff * diff < 0:
+            prev = closes[i - 1] - closes[i - 2]
+            if prev * diff < 0:
                 rejections += 1
 
-        speed += abs(diff)
+        strength += abs(diff)
 
     total = len(closes)
 
     dominance = abs(up_moves - down_moves) / total if total > 0 else 0
-    volatility = np.std(closes)
-    avg_speed = speed / total if total > 0 else 0
+    avg_strength = strength / total if total > 0 else 0
 
     direction = "call" if up_moves >= down_moves else "put"
 
@@ -39,25 +39,26 @@ def micro_flow(df_1s):
         "direction": direction,
         "dominance": dominance,
         "rejections": rejections,
-        "volatility": volatility,
-        "speed": avg_speed,
+        "strength": avg_strength,
         "up": up_moves,
         "down": down_moves
     }
+
 
 # ================= CLASIFICACIÓN =================
 
 def classify(flow):
 
-    # 🔥 CONTINUACIÓN (flujo limpio)
+    # tendencia clara → continuación
     if flow["dominance"] > 0.55 and flow["rejections"] <= 3:
         return "continuation"
 
-    # 🔁 REVERSIÓN (mucho rechazo)
+    # mucha indecisión → posible reversión
     if flow["rejections"] >= 4:
         return "reversal"
 
     return "neutral"
+
 
 # ================= SCORE =================
 
@@ -65,23 +66,21 @@ def score_flow(flow):
 
     score = 0
 
-    # dominancia
     if flow["dominance"] > 0.6:
         score += 2
     elif flow["dominance"] > 0.5:
         score += 1
 
-    # pocos rechazos
     if flow["rejections"] <= 2:
         score += 2
     elif flow["rejections"] <= 4:
         score += 1
 
-    # velocidad
-    if flow["speed"] > 0:
+    if flow["strength"] > 0:
         score += 1
 
     return score
+
 
 # ================= DECISIÓN =================
 
@@ -90,29 +89,29 @@ def decide(flow):
     setup = classify(flow)
     score = score_flow(flow)
 
-    # 🔥 SIEMPRE DEVUELVE DIRECCIÓN (para que opere)
+    # CONTINUACIÓN
     if setup == "continuation":
         return flow["direction"], score
 
+    # REVERSIÓN
     if setup == "reversal":
         opposite = "put" if flow["direction"] == "call" else "call"
         return opposite, score
 
-    # neutral → igual entra (forzado)
+    # NEUTRAL → igual entra (para no bloquear el bot)
     return flow["direction"], score
+
 
 # ================= FUNCIÓN PRINCIPAL =================
 
-def pro_signal(df_m1, df_m5, df_1s):
+def pro_signal(df_m1):
 
-    if df_1s is None or len(df_1s) < 10:
+    if df_m1 is None or len(df_m1) < 10:
         return None, None
 
-    flow = micro_flow(df_1s)
+    flow = micro_flow(df_m1)
 
     direction, score = decide(flow)
 
-    # puedes usar el score si quieres filtrar en el futuro
-    # ahora NO bloquea para que siempre opere
-
+    # 🔥 SIEMPRE OPERA (como pediste)
     return direction, 1
