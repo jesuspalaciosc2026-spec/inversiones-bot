@@ -21,10 +21,35 @@ def lower_wick(c):
     return min(c["close"], c["open"]) - c["low"]
 
 
-# ================= 1. DETECTAR TENDENCIA =================
+# ================= FILTROS =================
+
+def is_sideways(df):
+    recent = df.tail(10)
+    highs = recent["high"]
+    lows = recent["low"]
+
+    rango = highs.max() - lows.min()
+    velas = (highs - lows).mean()
+
+    return rango < velas * 2
+
+
+def is_explosive(c):
+    body = body_size(c)
+    rango = candle_range(c)
+    return body > rango * 0.8
+
+
+def avoid_fake_move(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    return abs(last["close"] - prev["close"]) < (last["high"] - last["low"]) * 1.5
+
+
+# ================= TENDENCIA =================
 
 def detect_trend(df):
-
     last = df.tail(5)
 
     bullish = sum(is_bullish(c) for _, c in last.iterrows())
@@ -32,29 +57,30 @@ def detect_trend(df):
 
     if bullish >= 4:
         return "call"
-
     if bearish >= 4:
         return "put"
 
     return None
 
 
-# ================= 2. DETECTAR RETROCESO =================
+# ================= PULLBACK =================
 
 def detect_pullback(df, direction):
 
     candles = df.tail(3)
 
+    sizes = [body_size(c) for _, c in candles.iterrows()]
+
     if direction == "call":
-        return all(is_bearish(c) for _, c in candles.iterrows())
+        return all(is_bearish(c) for _, c in candles.iterrows()) and max(sizes) < np.mean(sizes) * 1.5
 
     if direction == "put":
-        return all(is_bullish(c) for _, c in candles.iterrows())
+        return all(is_bullish(c) for _, c in candles.iterrows()) and max(sizes) < np.mean(sizes) * 1.5
 
     return False
 
 
-# ================= 3. INDECISIÓN =================
+# ================= INDECISIÓN =================
 
 def detect_indecision(df):
 
@@ -69,7 +95,7 @@ def detect_indecision(df):
     return small >= 1
 
 
-# ================= 4. RECHAZO =================
+# ================= RECHAZO =================
 
 def detect_rejection(df, direction):
 
@@ -84,48 +110,66 @@ def detect_rejection(df, direction):
     return False
 
 
-# ================= 5. CONTINUACIÓN =================
+# ================= CONFIRMACIÓN =================
 
-def confirmation(df, direction):
+def strong_confirmation(df, direction):
 
     last = df.iloc[-1]
 
+    body = body_size(last)
+    rango = candle_range(last)
+
+    fuerza = body / rango if rango > 0 else 0
+
     if direction == "call":
-        return is_bullish(last)
+        return last["close"] > last["open"] and fuerza > 0.6
 
     if direction == "put":
-        return is_bearish(last)
+        return last["close"] < last["open"] and fuerza > 0.6
 
     return False
 
 
 # ================= FUNCIÓN PRINCIPAL =================
 
-def pro_signal(df_m1, df_m5, df_htf):
+def pro_signal(df_m1, df_m5=None, df_htf=None):
 
-    # usamos M1 directo (tu nueva lógica)
     df = df_m1
 
-    # 1. Tendencia
+    if len(df) < 10:
+        return None, None
+
+    # ❌ filtro lateral
+    if is_sideways(df):
+        return None, None
+
+    # ❌ vela explosiva
+    if is_explosive(df.iloc[-1]):
+        return None, None
+
+    # ❌ fake move
+    if not avoid_fake_move(df):
+        return None, None
+
+    # ✅ tendencia
     direction = detect_trend(df)
     if direction is None:
         return None, None
 
-    # 2. Pullback
+    # ✅ pullback
     if not detect_pullback(df.iloc[:-1], direction):
         return None, None
 
-    # 3. Indecisión
+    # ✅ indecisión
     if not detect_indecision(df):
         return None, None
 
-    # 4. Rechazo
+    # ✅ rechazo
     if not detect_rejection(df, direction):
         return None, None
 
-    # 5. Confirmación
-    if not confirmation(df, direction):
+    # ✅ confirmación fuerte
+    if not strong_confirmation(df, direction):
         return None, None
 
-    # 6. Expiración fija 1 minuto
     return direction, 1
