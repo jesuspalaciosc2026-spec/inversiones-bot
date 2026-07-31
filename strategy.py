@@ -1,49 +1,97 @@
 import numpy as np
 
-# ================= TENDENCIA =================
+# ================= EMA =================
 
-def get_trend(df):
+def add_ema(df):
+    df["ema20"] = df["close"].ewm(span=20).mean()
+    return df
 
-    closes = df["close"].values[-10:]
 
-    up = 0
-    down = 0
+# ================= DETECTAR TENDENCIA =================
 
-    for i in range(1, len(closes)):
-        if closes[i] > closes[i-1]:
-            up += 1
-        elif closes[i] < closes[i-1]:
-            down += 1
+def trend_direction(df):
 
-    if up > down:
-        return "call"
-    elif down > up:
+    ema = df["ema20"]
+
+    # pendiente de EMA
+    if ema.iloc[-1] < ema.iloc[-2]:
         return "put"
-    else:
-        return None
 
-
-# ================= PULLBACK =================
-
-def detect_pullback(df):
-
-    closes = df["close"].values
-
-    # últimas 3 velas contra la tendencia
-    c1, c2, c3 = closes[-1], closes[-2], closes[-3]
-
-    if c1 < c2 < c3:
-        return "bearish_pullback"
-
-    if c1 > c2 > c3:
-        return "bullish_pullback"
+    if ema.iloc[-1] > ema.iloc[-2]:
+        return "call"
 
     return None
 
 
-# ================= FUERZA =================
+# ================= PULLBACK =================
 
-def strong_candle(df):
+def detect_pullback(df, trend):
+
+    c1 = df.iloc[-1]
+    c2 = df.iloc[-2]
+    c3 = df.iloc[-3]
+
+    # bajista → velas verdes (retroceso)
+    if trend == "put":
+        if c1["close"] > c1["open"] and c2["close"] > c2["open"]:
+            return True
+
+    # alcista → velas rojas (retroceso)
+    if trend == "call":
+        if c1["close"] < c1["open"] and c2["close"] < c2["open"]:
+            return True
+
+    return False
+
+
+# ================= PULLBACK DÉBIL =================
+
+def weak_pullback(df, trend):
+
+    recent = df.tail(4)
+
+    strength_sum = 0
+    count = 0
+
+    for i in range(len(recent)):
+        candle = recent.iloc[i]
+
+        body = abs(candle["close"] - candle["open"])
+        full = candle["high"] - candle["low"]
+
+        if full == 0:
+            continue
+
+        strength = body / full
+        strength_sum += strength
+        count += 1
+
+    if count == 0:
+        return False
+
+    avg_strength = strength_sum / count
+
+    # 🔥 clave: retroceso débil = poco cuerpo
+    return avg_strength < 0.5
+
+
+# ================= CERCA DE EMA =================
+
+def near_ema(df):
+
+    last = df.iloc[-1]
+    ema = df["ema20"].iloc[-1]
+
+    distance = abs(last["close"] - ema)
+
+    avg_range = (df["high"] - df["low"]).mean()
+
+    return distance < avg_range
+
+
+# ================= CONFIRMACIÓN =================
+
+def continuation_candle(df, trend):
 
     last = df.iloc[-1]
 
@@ -55,65 +103,83 @@ def strong_candle(df):
 
     strength = body / full
 
-    return strength > 0.6
+    # vela fuerte a favor de la tendencia
+    if trend == "put":
+        return last["close"] < last["open"] and strength > 0.5
+
+    if trend == "call":
+        return last["close"] > last["open"] and strength > 0.5
+
+    return False
 
 
-# ================= EVITAR RANGO =================
+# ================= FILTRO ANTI MALAS ENTRADAS =================
 
-def is_not_range(df):
+def avoid_bad_entries(df):
 
-    recent = df.tail(15)
+    recent = df.tail(5)
 
+    # ❌ evitar sobre-extensión (velas muy fuertes seguidas)
+    big = 0
+
+    for i in range(len(recent)):
+        body = abs(recent.iloc[i]["close"] - recent.iloc[i]["open"])
+        full = recent.iloc[i]["high"] - recent.iloc[i]["low"]
+
+        if full == 0:
+            continue
+
+        if (body / full) > 0.7:
+            big += 1
+
+    if big >= 3:
+        return False
+
+    # ❌ evitar rango
     high = recent["high"].max()
     low = recent["low"].min()
 
-    avg = (recent["high"] - recent["low"]).mean()
+    avg_range = (recent["high"] - recent["low"]).mean()
 
-    return (high - low) > avg * 2
+    if (high - low) < avg_range:
+        return False
 
-
-# ================= DIRECCIÓN FINAL =================
-
-def hybrid_logic(df):
-
-    trend = get_trend(df)
-
-    if trend is None:
-        return None
-
-    pullback = detect_pullback(df)
-
-    # 🔥 CONTINUACIÓN (TU PATRÓN)
-    if trend == "call" and pullback == "bearish_pullback":
-        if strong_candle(df):
-            return "call"
-
-    if trend == "put" and pullback == "bullish_pullback":
-        if strong_candle(df):
-            return "put"
-
-    # 🔁 fallback (para no quedarse sin operar)
-    return trend
+    return True
 
 
 # ================= FUNCIÓN PRINCIPAL =================
 
 def pro_signal(df_m1):
 
-    if df_m1 is None or len(df_m1) < 20:
+    if df_m1 is None or len(df_m1) < 30:
         return None, None
 
-    # filtro de rango
-    if not is_not_range(df_m1):
-        # aún así devuelve algo para no congelar el bot
-        trend = get_trend(df_m1)
-        if trend:
-            return trend, 1
+    df = add_ema(df_m1.copy())
+
+    # 1. tendencia
+    trend = trend_direction(df)
+    if trend is None:
         return None, None
 
-    direction = hybrid_logic(df_m1)
+    # 2. evitar entradas malas
+    if not avoid_bad_entries(df):
+        return None, None
 
-    if direction:
-        return direction, 1
+    # 3. pullback
+    if not detect_pullback(df, trend):
+        return None, None
 
-    return None, None
+    # 4. pullback débil
+    if not weak_pullback(df, trend):
+        return None, None
+
+    # 5. cerca de EMA
+    if not near_ema(df):
+        return None, None
+
+    # 6. confirmación (continuación)
+    if not continuation_candle(df, trend):
+        return None, None
+
+    # ✅ ENTRADA PERFECTA
+    return trend, 1
