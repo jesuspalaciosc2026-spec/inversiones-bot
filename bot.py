@@ -16,9 +16,7 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 5000
-
-# 🔥 SOLO OTC
+AMOUNT = 35
 PAIR = "EURUSD-OTC"
 
 trade_open = False
@@ -26,9 +24,12 @@ last_trade_time = 0
 bot_active = True
 last_update_id = None
 current_expiration = 1
-last_candle_time = None
 
-# 🔥 CONTROL
+# 🔥 CONTROL TIEMPO (CADA 2 MIN)
+last_execution_time = 0
+EXECUTION_INTERVAL = 120  # segundos (2 minutos)
+
+# 🔥 CONTROL DE OPERACIONES
 trade_count = 0
 MAX_TRADES = 15
 
@@ -81,23 +82,14 @@ if not iq.check_connect():
 
 iq.change_balance("PRACTICE")
 
-print("🔥 BOT ACTIVO (EURUSD-OTC)")
-send("🔥 BOT ACTIVO (EURUSD-OTC)")
-
-# ================= VALIDAR MERCADO =================
-
-def is_open(pair):
-    try:
-        assets = iq.get_all_open_time()
-        return assets["binary"][pair]["open"]
-    except:
-        return False
+print("🔥 BOT ACTIVO (CADA 2 MIN - EURUSD-OTC)")
+send("🔥 BOT ACTIVO (CADA 2 MIN - EURUSD-OTC)")
 
 # ================= DATOS =================
 
 def get_candles(pair, tf):
     try:
-        data = iq.get_candles(pair, tf, 30, time.time())
+        data = iq.get_candles(pair, tf, 50, time.time())
         df = pd.DataFrame(data)
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return df
@@ -144,13 +136,7 @@ while True:
             print("STOP 15 TRADES")
             break
 
-        # ❌ OTC cerrado
-        if not is_open(PAIR):
-            print("EURUSD-OTC cerrado...")
-            time.sleep(5)
-            continue
-
-        # ⏳ esperar cierre
+        # ⏳ esperar cierre operación
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
                 trade_open = False
@@ -158,26 +144,31 @@ while True:
                 time.sleep(1)
                 continue
 
-        # 📊 datos
-        df_m1 = get_candles(PAIR, 60)
+        # ⏱️ CONTROL CADA 2 MINUTOS
+        now = time.time()
 
-        if df_m1 is None or len(df_m1) < 20:
+        if now - last_execution_time < EXECUTION_INTERVAL:
             time.sleep(1)
             continue
 
-        current_candle = df_m1["from"].iloc[-1]
+        print("⏱️ EJECUTANDO ANÁLISIS...")
 
-        # 🔥 UNA VEZ POR VELA
-        if last_candle_time == current_candle:
-            time.sleep(1)
+        df_m1 = get_candles(PAIR, 60)
+
+        if df_m1 is None or len(df_m1) < 20:
+            print("❌ Sin datos...")
+            time.sleep(2)
             continue
 
         # 🧠 estrategia
         signal, expiration = pro_signal(df_m1)
 
-        if signal:
-            trade(PAIR, signal, expiration)
-            last_candle_time = current_candle
+        # 🔥 SIEMPRE OPERAR (fallback)
+        direction = signal if signal else "call"
+
+        trade(PAIR, direction, 1)
+
+        last_execution_time = now
 
         time.sleep(1)
 
