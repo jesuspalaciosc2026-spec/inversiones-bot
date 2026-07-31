@@ -1,158 +1,113 @@
 import numpy as np
 
-# ================= UTILIDADES =================
+# ================= MICRO FLOW =================
 
-def is_bullish(c):
-    return c["close"] > c["open"]
+def micro_flow(df_1s):
 
-def is_bearish(c):
-    return c["close"] < c["open"]
+    closes = df_1s["close"].values
 
-def body(c):
-    return abs(c["close"] - c["open"])
+    up_moves = 0
+    down_moves = 0
+    rejections = 0
 
-def rng(c):
-    return c["high"] - c["low"]
+    for i in range(1, len(closes)):
 
-# ================= TENDENCIA =================
+        if closes[i] > closes[i-1]:
+            up_moves += 1
+        elif closes[i] < closes[i-1]:
+            down_moves += 1
 
-def trend_m1(df):
-    last = df.tail(5)
-    bulls = sum(is_bullish(c) for _, c in last.iterrows())
-    bears = sum(is_bearish(c) for _, c in last.iterrows())
+        # detectar cambio de dirección (rechazo)
+        if i > 1:
+            prev = closes[i-1] - closes[i-2]
+            curr = closes[i] - closes[i-1]
 
-    if bulls >= 4:
-        return "call"
-    if bears >= 4:
-        return "put"
+            if prev * curr < 0:
+                rejections += 1
+
+    total = len(closes)
+
+    dominance = abs(up_moves - down_moves) / total if total > 0 else 0
+    volatility = np.std(closes)
+
+    direction = "call" if up_moves > down_moves else "put"
+
+    return {
+        "direction": direction,
+        "up_moves": up_moves,
+        "down_moves": down_moves,
+        "rejections": rejections,
+        "dominance": dominance,
+        "volatility": volatility
+    }
+
+# ================= CLASIFICAR MOVIMIENTO =================
+
+def classify_flow(flow):
+
+    # 🔥 continuación fuerte
+    if flow["dominance"] > 0.6 and flow["rejections"] < 3:
+        return "continuation"
+
+    # 🔁 reversión probable
+    if flow["rejections"] >= 4 and flow["dominance"] < 0.4:
+        return "reversal"
+
     return None
 
+# ================= FILTRO DE FUERZA =================
 
-def trend_m5(df):
-    last = df.tail(5)
-    bulls = sum(is_bullish(c) for _, c in last.iterrows())
-    bears = sum(is_bearish(c) for _, c in last.iterrows())
+def strong_flow(flow):
 
-    if bulls >= 4:
-        return "call"
-    if bears >= 4:
-        return "put"
-    return None
+    return (
+        flow["volatility"] > 0 and
+        flow["dominance"] > 0.5
+    )
 
-# ================= ESTRUCTURA =================
+# ================= FILTRO ANTI-RUIDO =================
 
-def structure_ok(df, direction):
-    highs = df["high"].tail(5).values
-    lows = df["low"].tail(5).values
+def not_noise(df_1s):
 
-    if direction == "call":
-        return all(highs[i] > highs[i-1] for i in range(1, len(highs))) and \
-               all(lows[i] > lows[i-1] for i in range(1, len(lows)))
+    closes = df_1s["close"].values
 
-    if direction == "put":
-        return all(highs[i] < highs[i-1] for i in range(1, len(highs))) and \
-               all(lows[i] < lows[i-1] for i in range(1, len(lows)))
+    if len(closes) < 10:
+        return False
 
-    return False
+    movement = abs(closes[-1] - closes[0])
+    noise = np.std(closes)
 
-# ================= PULLBACK =================
+    return movement > noise * 0.5
 
-def pullback(df, direction):
-    candles = df.tail(4)
+# ================= FUNCIÓN PRINCIPAL =================
 
-    if direction == "call":
-        return sum(is_bearish(c) for _, c in candles.iterrows()) >= 2
+def pro_signal(df_m1, df_m5, df_1s):
 
-    if direction == "put":
-        return sum(is_bullish(c) for _, c in candles.iterrows()) >= 2
-
-    return False
-
-# ================= CONFIRMACIÓN =================
-
-def strong_candle(c, direction):
-    strength = body(c) / rng(c) if rng(c) > 0 else 0
-
-    if direction == "call":
-        return is_bullish(c) and strength > 0.6
-
-    if direction == "put":
-        return is_bearish(c) and strength > 0.6
-
-    return False
-
-# ================= FILTROS =================
-
-def no_range(df):
-    recent = df.tail(20)
-    return (recent["high"].max() - recent["low"].min()) > (recent["high"] - recent["low"]).mean() * 2
-
-
-def no_fake_break(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    return abs(last["close"] - prev["close"]) < (last["high"] - last["low"]) * 1.5
-
-
-def far_from_levels(df):
-    recent = df.tail(20)
-    price = df["close"].iloc[-1]
-
-    high = recent["high"].max()
-    low = recent["low"].min()
-
-    margin = (high - low) * 0.1
-
-    return (low + margin) < price < (high - margin)
-
-# ================= SCORE =================
-
-def score_setup(df_m1, df_m5, direction):
-
-    score = 0
-
-    if trend_m5(df_m5) == direction:
-        score += 2
-
-    if trend_m1(df_m1) == direction:
-        score += 2
-
-    if structure_ok(df_m1, direction):
-        score += 2
-
-    if pullback(df_m1.iloc[:-1], direction):
-        score += 1
-
-    if strong_candle(df_m1.iloc[-1], direction):
-        score += 2
-
-    if no_range(df_m1):
-        score += 1
-
-    if no_fake_break(df_m1):
-        score += 1
-
-    if far_from_levels(df_m1):
-        score += 1
-
-    return score
-
-# ================= MAIN =================
-
-def pro_signal(df_m1, df_m5, df_htf=None):
-
-    if len(df_m1) < 20 or len(df_m5) < 20:
+    # seguridad mínima
+    if df_1s is None or len(df_1s) < 20:
         return None, None
 
-    direction = trend_m1(df_m1)
-
-    if direction is None:
+    # evitar mercado muerto
+    if not not_noise(df_1s):
         return None, None
 
-    sc = score_setup(df_m1, df_m5, direction)
+    flow = micro_flow(df_1s)
 
-    # 🔥 SOLO ENTRADAS DE ALTA CALIDAD
-    if sc >= 8:
-        return direction, 1
+    # validar fuerza
+    if not strong_flow(flow):
+        return None, None
+
+    setup = classify_flow(flow)
+
+    if setup is None:
+        return None, None
+
+    # 🎯 CONTINUACIÓN
+    if setup == "continuation":
+        return flow["direction"], 1
+
+    # 🔁 REVERSIÓN
+    if setup == "reversal":
+        opposite = "put" if flow["direction"] == "call" else "call"
+        return opposite, 1
 
     return None, None
