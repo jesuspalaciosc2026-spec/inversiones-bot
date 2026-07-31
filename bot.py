@@ -16,7 +16,7 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 20000
+AMOUNT = 20  # ⚠️ baja esto si estás en real
 
 PAIRS = [
     "EURUSD",
@@ -145,16 +145,21 @@ while True:
         for pair in PAIRS:
 
             df_m1 = get_candles(pair, 60)
+            df_m5 = get_candles(pair, 300)
 
-            if df_m1 is None or len(df_m1) < 10:
+            if df_m1 is None or df_m5 is None:
+                continue
+
+            if len(df_m1) < 20 or len(df_m5) < 20:
                 continue
 
             current_candle = df_m1["from"].iloc[-1]
 
+            # ❌ evitar múltiples entradas en misma vela
             if last_candle_time.get(pair) == current_candle:
                 continue
 
-            signal, expiration = pro_signal(df_m1)
+            signal, expiration = pro_signal(df_m1, df_m5)
 
             if signal:
                 trade(pair, signal, expiration)
@@ -165,4 +170,4 @@ while True:
 
     except Exception as e:
         print("Error:", e)
-        time.sleep(1)
+        time.sleep(2)
