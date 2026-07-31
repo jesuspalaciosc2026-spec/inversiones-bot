@@ -1,118 +1,126 @@
-import time
-import os
-import requests
-import pandas as pd
-import sys
-import logging
+import numpy as np
 
-from iqoptionapi.stable_api import IQ_Option
-from strategy import pro_signal
+# ================= RECONSTRUIR VELA =================
 
-logging.getLogger().setLevel(logging.CRITICAL)
-sys.stderr = open(os.devnull, 'w')
+def build_candle_from_ticks(df_5s):
 
-EMAIL = os.getenv("IQ_EMAIL")
-PASSWORD = os.getenv("IQ_PASSWORD")
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+    ticks = df_5s.tail(12)
 
-AMOUNT = 20
-PAIR = "EURUSD-OTC"
+    open_price = ticks.iloc[0]["open"]
+    close_price = ticks.iloc[-1]["close"]
+    high = ticks["high"].max()
+    low = ticks["low"].min()
 
-trade_open = False
-last_trade_time = 0
-current_expiration = 1
-
-# ================= TELEGRAM =================
-
-def send(msg):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=5
-        )
-    except Exception:
-        pass
+    return open_price, close_price, high, low
 
 
-# ================= IQ =================
+# ================= DOMINANCIA =================
 
-iq = IQ_Option(EMAIL, PASSWORD)
-iq.connect()
+def dominance(df_5s):
 
-if not iq.check_connect():
-    print("❌ Error conexión")
-    exit()
+    ticks = df_5s.tail(12)
 
-iq.change_balance("PRACTICE")
+    buyers = 0
+    sellers = 0
+    strength = 0
 
-print("🔥 BOT ACTIVO")
-send("🔥 BOT ACTIVO")
+    for i in range(len(ticks)):
+        c = ticks.iloc[i]
 
+        move = c["close"] - c["open"]
+        size = abs(move)
+        full = c["high"] - c["low"]
 
-# ================= DATOS =================
-
-def get_candles(pair, tf, count=50):
-    try:
-        data = iq.get_candles(pair, tf, count, time.time())
-        df = pd.DataFrame(data)
-        df.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        return df
-    except:
-        return None
-
-
-# ================= TRADE =================
-
-def trade(direction):
-
-    global trade_open, last_trade_time
-
-    status, _ = iq.buy(AMOUNT, PAIR, direction, 1)
-
-    if status:
-        trade_open = True
-        last_trade_time = time.time()
-
-        msg = f"🎯 {PAIR} {direction.upper()} (1m)"
-        print(msg)
-        send(msg)
-
-
-# ================= LOOP =================
-
-while True:
-    try:
-
-        # evitar múltiples operaciones
-        if trade_open:
-            if time.time() - last_trade_time > 60:
-                trade_open = False
-            else:
-                time.sleep(0.5)
-                continue
-
-        t = int(iq.get_server_timestamp())
-
-        # 🔥 SOLO SEGUNDO 58
-        if t % 60 < 58:
-            time.sleep(0.2)
+        if full == 0:
             continue
 
-        df_m1 = get_candles(PAIR, 60, 50)
-        df_5s = get_candles(PAIR, 5, 50)
+        power = size / full
 
-        if df_m1 is None or df_5s is None:
-            continue
+        if move > 0:
+            buyers += 1
+            strength += power
+        else:
+            sellers += 1
+            strength -= power
 
-        signal, expiration = pro_signal(df_m1, df_5s)
+    return buyers, sellers, strength
 
-        if signal:
-            trade(signal)
 
-        time.sleep(1)
+# ================= MANIPULACIÓN =================
 
-    except Exception as e:
-        print("Error:", e)
-        time.sleep(1)
+def manipulation(df_5s):
+
+    ticks = df_5s.tail(6)
+
+    highs = ticks["high"].values
+    lows = ticks["low"].values
+    closes = ticks["close"].values
+
+    if highs[-1] > max(highs[:-1]) and closes[-1] < highs[-2]:
+        return True
+
+    if lows[-1] < min(lows[:-1]) and closes[-1] > lows[-2]:
+        return True
+
+    return False
+
+
+# ================= VELOCIDAD =================
+
+def velocity(df_5s):
+
+    ticks = df_5s.tail(6)
+
+    movements = []
+
+    for i in range(1, len(ticks)):
+        diff = ticks.iloc[i]["close"] - ticks.iloc[i-1]["close"]
+        movements.append(diff)
+
+    return np.mean(np.abs(movements))
+
+
+# ================= PRO SIGNAL =================
+
+def pro_signal(df_m1, df_5s):
+
+    if df_m1 is None or df_5s is None:
+        return None, None
+
+    if len(df_5s) < 20:
+        return None, None
+
+    open_p, close_p, high, low = build_candle_from_ticks(df_5s)
+
+    body = close_p - open_p
+    total = high - low
+
+    if total == 0:
+        return None, None
+
+    body_strength = abs(body) / total
+
+    buyers, sellers, strength = dominance(df_5s)
+
+    # filtros
+    if manipulation(df_5s):
+        return None, None
+
+    if velocity(df_5s) < 0.00001:
+        return None, None
+
+    # CONTINUACIÓN
+    if body > 0 and buyers > sellers and strength > 0.5 and body_strength > 0.5:
+        return "call", 1
+
+    if body < 0 and sellers > buyers and strength < -0.5 and body_strength > 0.5:
+        return "put", 1
+
+    # REVERSIÓN
+    if body > 0 and sellers > buyers:
+        return "put", 1
+
+    if body < 0 and buyers > sellers:
+        return "call", 1
+
+    return None, None
