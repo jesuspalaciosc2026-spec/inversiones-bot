@@ -16,7 +16,7 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 20
+AMOUNT = 2000
 
 PAIRS = [
     "EURUSD-OTC",
@@ -31,6 +31,7 @@ last_trade_time = 0
 bot_active = True
 last_update_id = None
 current_expiration = 1
+last_candle_time = {}
 
 # ================= TELEGRAM =================
 
@@ -89,7 +90,7 @@ send("🔥 BOT ACTIVO")
 
 def get_candles(pair, tf):
     try:
-        data = iq.get_candles(pair, tf, 100, time.time())
+        data = iq.get_candles(pair, tf, 50, time.time())
         df = pd.DataFrame(data)
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return add_indicators(df)
@@ -124,6 +125,7 @@ while True:
             time.sleep(1)
             continue
 
+        # Esperar a que termine operación
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
                 trade_open = False
@@ -131,29 +133,27 @@ while True:
                 time.sleep(1)
                 continue
 
-        t = int(iq.get_server_timestamp())
-
-        # Espera hasta los últimos segundos de la vela
-        if t % 60 < 55:
-            time.sleep(0.2)
-            continue
-
         for pair in PAIRS:
 
             df_m1 = get_candles(pair, 60)
-            df_m5 = get_candles(pair, 300)
-            df_h3 = get_candles(pair, 900)
 
-            if df_m1 is None or df_m5 is None or df_h3 is None:
+            if df_m1 is None or len(df_m1) < 10:
                 continue
 
-            signal, expiration = pro_signal(df_m1, df_m5, df_h3)
+            # 🔥 CONTROL DE UNA ENTRADA POR VELA
+            current_candle = df_m1["from"].iloc[-1]
+
+            if last_candle_time.get(pair) == current_candle:
+                continue
+
+            signal, expiration = pro_signal(df_m1, None, None)
 
             if signal:
                 trade(pair, signal, expiration)
+                last_candle_time[pair] = current_candle
                 break
 
-        time.sleep(1)
+        time.sleep(0.5)
 
     except Exception as e:
         print("Error:", e)
