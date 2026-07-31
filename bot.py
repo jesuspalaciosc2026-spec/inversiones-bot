@@ -16,10 +16,14 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 2000  # ⚠️ recomendado bajo hasta validar
+AMOUNT = 20
 
 PAIRS = [
     "EURUSD",
+    "GBPUSD",
+    "EURGBP",
+    "USDCHF",
+    "EURJPY"
 ]
 
 trade_open = False
@@ -116,7 +120,7 @@ def trade(pair, direction, expiration):
     else:
         print(f"❌ No se pudo abrir operación en {pair}")
 
-# ================= LOOP PRINCIPAL =================
+# ================= LOOP =================
 
 while True:
     try:
@@ -130,7 +134,6 @@ while True:
             time.sleep(5)
             continue
 
-        # esperar cierre de operación
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
                 trade_open = False
@@ -138,7 +141,7 @@ while True:
                 time.sleep(1)
                 continue
 
-        # ⏱️ ENTRAR SOLO AL INICIO DE VELA
+        # 🔥 ENTRAR SOLO AL INICIO DE VELA
         t = int(iq.get_server_timestamp())
         if t % 60 > 2:
             time.sleep(0.2)
@@ -158,7 +161,6 @@ while True:
 
             current_candle = df_m1["from"].iloc[-1]
 
-            # evitar múltiples entradas en misma vela
             if last_candle_time.get(pair) == current_candle:
                 continue
 
