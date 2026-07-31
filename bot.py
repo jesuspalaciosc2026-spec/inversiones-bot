@@ -16,14 +16,10 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 20  # ⚠️ baja esto si estás en real
+AMOUNT = 2000  # ⚠️ recomendado bajo hasta validar
 
 PAIRS = [
     "EURUSD",
-    "GBPUSD",
-    "EURGBP",
-    "USDCHF",
-    "EURJPY"
 ]
 
 trade_open = False
@@ -58,7 +54,6 @@ def check_commands():
 
         for result in r.get("result", []):
             last_update_id = result["update_id"] + 1
-
             text = result.get("message", {}).get("text", "")
 
             if text == "/stop":
@@ -96,7 +91,7 @@ send("🔥 BOT ACTIVO")
 
 def get_candles(pair, tf):
     try:
-        data = iq.get_candles(pair, tf, 50, time.time())
+        data = iq.get_candles(pair, tf, 60, time.time())
         df = pd.DataFrame(data)
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return df
@@ -121,7 +116,7 @@ def trade(pair, direction, expiration):
     else:
         print(f"❌ No se pudo abrir operación en {pair}")
 
-# ================= LOOP =================
+# ================= LOOP PRINCIPAL =================
 
 while True:
     try:
@@ -135,6 +130,7 @@ while True:
             time.sleep(5)
             continue
 
+        # esperar cierre de operación
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
                 trade_open = False
@@ -142,24 +138,31 @@ while True:
                 time.sleep(1)
                 continue
 
+        # ⏱️ ENTRAR SOLO AL INICIO DE VELA
+        t = int(iq.get_server_timestamp())
+        if t % 60 > 2:
+            time.sleep(0.2)
+            continue
+
         for pair in PAIRS:
 
             df_m1 = get_candles(pair, 60)
             df_m5 = get_candles(pair, 300)
+            df_1s = get_candles(pair, 1)
 
-            if df_m1 is None or df_m5 is None:
+            if df_m1 is None or df_m5 is None or df_1s is None:
                 continue
 
-            if len(df_m1) < 20 or len(df_m5) < 20:
+            if len(df_m1) < 20 or len(df_m5) < 20 or len(df_1s) < 20:
                 continue
 
             current_candle = df_m1["from"].iloc[-1]
 
-            # ❌ evitar múltiples entradas en misma vela
+            # evitar múltiples entradas en misma vela
             if last_candle_time.get(pair) == current_candle:
                 continue
 
-            signal, expiration = pro_signal(df_m1, df_m5)
+            signal, expiration = pro_signal(df_m1, df_m5, df_1s)
 
             if signal:
                 trade(pair, signal, expiration)
