@@ -8,168 +8,151 @@ def is_bullish(c):
 def is_bearish(c):
     return c["close"] < c["open"]
 
-def body_size(c):
+def body(c):
     return abs(c["close"] - c["open"])
 
-def candle_range(c):
+def rng(c):
     return c["high"] - c["low"]
-
-def upper_wick(c):
-    return c["high"] - max(c["close"], c["open"])
-
-def lower_wick(c):
-    return min(c["close"], c["open"]) - c["low"]
-
-
-# ================= FILTROS =================
-
-def is_sideways(df):
-    recent = df.tail(10)
-    highs = recent["high"]
-    lows = recent["low"]
-
-    rango = highs.max() - lows.min()
-    velas = (highs - lows).mean()
-
-    return rango < velas * 2
-
-
-def is_explosive(c):
-    body = body_size(c)
-    rango = candle_range(c)
-    return body > rango * 0.8
-
-
-def avoid_fake_move(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    return abs(last["close"] - prev["close"]) < (last["high"] - last["low"]) * 1.5
-
 
 # ================= TENDENCIA =================
 
-def detect_trend(df):
+def trend_m1(df):
     last = df.tail(5)
+    bulls = sum(is_bullish(c) for _, c in last.iterrows())
+    bears = sum(is_bearish(c) for _, c in last.iterrows())
 
-    bullish = sum(is_bullish(c) for _, c in last.iterrows())
-    bearish = sum(is_bearish(c) for _, c in last.iterrows())
-
-    if bullish >= 4:
+    if bulls >= 4:
         return "call"
-    if bearish >= 4:
+    if bears >= 4:
         return "put"
-
     return None
 
 
+def trend_m5(df):
+    last = df.tail(5)
+    bulls = sum(is_bullish(c) for _, c in last.iterrows())
+    bears = sum(is_bearish(c) for _, c in last.iterrows())
+
+    if bulls >= 4:
+        return "call"
+    if bears >= 4:
+        return "put"
+    return None
+
+# ================= ESTRUCTURA =================
+
+def structure_ok(df, direction):
+    highs = df["high"].tail(5).values
+    lows = df["low"].tail(5).values
+
+    if direction == "call":
+        return all(highs[i] > highs[i-1] for i in range(1, len(highs))) and \
+               all(lows[i] > lows[i-1] for i in range(1, len(lows)))
+
+    if direction == "put":
+        return all(highs[i] < highs[i-1] for i in range(1, len(highs))) and \
+               all(lows[i] < lows[i-1] for i in range(1, len(lows)))
+
+    return False
+
 # ================= PULLBACK =================
 
-def detect_pullback(df, direction):
-
-    candles = df.tail(3)
-
-    sizes = [body_size(c) for _, c in candles.iterrows()]
+def pullback(df, direction):
+    candles = df.tail(4)
 
     if direction == "call":
-        return all(is_bearish(c) for _, c in candles.iterrows()) and max(sizes) < np.mean(sizes) * 1.5
+        return sum(is_bearish(c) for _, c in candles.iterrows()) >= 2
 
     if direction == "put":
-        return all(is_bullish(c) for _, c in candles.iterrows()) and max(sizes) < np.mean(sizes) * 1.5
+        return sum(is_bullish(c) for _, c in candles.iterrows()) >= 2
 
     return False
-
-
-# ================= INDECISIÓN =================
-
-def detect_indecision(df):
-
-    candles = df.tail(2)
-
-    small = 0
-
-    for _, c in candles.iterrows():
-        if body_size(c) < candle_range(c) * 0.4:
-            small += 1
-
-    return small >= 1
-
-
-# ================= RECHAZO =================
-
-def detect_rejection(df, direction):
-
-    last = df.iloc[-1]
-
-    if direction == "call":
-        return lower_wick(last) > body_size(last)
-
-    if direction == "put":
-        return upper_wick(last) > body_size(last)
-
-    return False
-
 
 # ================= CONFIRMACIÓN =================
 
-def strong_confirmation(df, direction):
-
-    last = df.iloc[-1]
-
-    body = body_size(last)
-    rango = candle_range(last)
-
-    fuerza = body / rango if rango > 0 else 0
+def strong_candle(c, direction):
+    strength = body(c) / rng(c) if rng(c) > 0 else 0
 
     if direction == "call":
-        return last["close"] > last["open"] and fuerza > 0.6
+        return is_bullish(c) and strength > 0.6
 
     if direction == "put":
-        return last["close"] < last["open"] and fuerza > 0.6
+        return is_bearish(c) and strength > 0.6
 
     return False
 
+# ================= FILTROS =================
 
-# ================= FUNCIÓN PRINCIPAL =================
+def no_range(df):
+    recent = df.tail(20)
+    return (recent["high"].max() - recent["low"].min()) > (recent["high"] - recent["low"]).mean() * 2
 
-def pro_signal(df_m1, df_m5=None, df_htf=None):
 
-    df = df_m1
+def no_fake_break(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    return abs(last["close"] - prev["close"]) < (last["high"] - last["low"]) * 1.5
 
-    if len(df) < 10:
+
+def far_from_levels(df):
+    recent = df.tail(20)
+    price = df["close"].iloc[-1]
+
+    high = recent["high"].max()
+    low = recent["low"].min()
+
+    margin = (high - low) * 0.1
+
+    return (low + margin) < price < (high - margin)
+
+# ================= SCORE =================
+
+def score_setup(df_m1, df_m5, direction):
+
+    score = 0
+
+    if trend_m5(df_m5) == direction:
+        score += 2
+
+    if trend_m1(df_m1) == direction:
+        score += 2
+
+    if structure_ok(df_m1, direction):
+        score += 2
+
+    if pullback(df_m1.iloc[:-1], direction):
+        score += 1
+
+    if strong_candle(df_m1.iloc[-1], direction):
+        score += 2
+
+    if no_range(df_m1):
+        score += 1
+
+    if no_fake_break(df_m1):
+        score += 1
+
+    if far_from_levels(df_m1):
+        score += 1
+
+    return score
+
+# ================= MAIN =================
+
+def pro_signal(df_m1, df_m5, df_htf=None):
+
+    if len(df_m1) < 20 or len(df_m5) < 20:
         return None, None
 
-    # ❌ filtro lateral
-    if is_sideways(df):
-        return None, None
+    direction = trend_m1(df_m1)
 
-    # ❌ vela explosiva
-    if is_explosive(df.iloc[-1]):
-        return None, None
-
-    # ❌ fake move
-    if not avoid_fake_move(df):
-        return None, None
-
-    # ✅ tendencia
-    direction = detect_trend(df)
     if direction is None:
         return None, None
 
-    # ✅ pullback
-    if not detect_pullback(df.iloc[:-1], direction):
-        return None, None
+    sc = score_setup(df_m1, df_m5, direction)
 
-    # ✅ indecisión
-    if not detect_indecision(df):
-        return None, None
+    # 🔥 SOLO ENTRADAS DE ALTA CALIDAD
+    if sc >= 8:
+        return direction, 1
 
-    # ✅ rechazo
-    if not detect_rejection(df, direction):
-        return None, None
-
-    # ✅ confirmación fuerte
-    if not strong_confirmation(df, direction):
-        return None, None
-
-    return direction, 1
+    return None, None
