@@ -16,7 +16,7 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 20
+AMOUNT = 2000
 
 PAIRS = [
     "EURUSD",
@@ -32,6 +32,10 @@ bot_active = True
 last_update_id = None
 current_expiration = 1
 last_candle_time = {}
+
+# 🔥 NUEVO
+trade_count = 0
+MAX_TRADES = 15
 
 # ================= TELEGRAM =================
 
@@ -71,12 +75,6 @@ def check_commands():
     except Exception:
         pass
 
-# ================= HORARIO =================
-
-def is_good_time():
-    hour = time.gmtime().tm_hour
-    return 12 <= hour <= 22
-
 # ================= IQ OPTION =================
 
 iq = IQ_Option(EMAIL, PASSWORD)
@@ -95,7 +93,7 @@ send("🔥 BOT ACTIVO")
 
 def get_candles(pair, tf):
     try:
-        data = iq.get_candles(pair, tf, 60, time.time())
+        data = iq.get_candles(pair, tf, 30, time.time())
         df = pd.DataFrame(data)
         df.rename(columns={"max": "high", "min": "low"}, inplace=True)
         return df
@@ -105,7 +103,7 @@ def get_candles(pair, tf):
 # ================= TRADE =================
 
 def trade(pair, direction, expiration):
-    global trade_open, last_trade_time, current_expiration
+    global trade_open, last_trade_time, current_expiration, trade_count
 
     status, _ = iq.buy(AMOUNT, pair, direction, expiration)
 
@@ -113,12 +111,11 @@ def trade(pair, direction, expiration):
         trade_open = True
         last_trade_time = time.time()
         current_expiration = expiration
+        trade_count += 1
 
-        msg = f"🎯 {pair} {direction.upper()} ({expiration}m)"
+        msg = f"🎯 {pair} {direction.upper()} ({expiration}m) | #{trade_count}"
         print(msg)
         send(msg)
-    else:
-        print(f"❌ No se pudo abrir operación en {pair}")
 
 # ================= LOOP =================
 
@@ -130,9 +127,11 @@ while True:
             time.sleep(1)
             continue
 
-        if not is_good_time():
-            time.sleep(5)
-            continue
+        # 🔥 DETENER DESPUÉS DE 15 TRADES
+        if trade_count >= MAX_TRADES:
+            send("🛑 15 OPERACIONES COMPLETADAS")
+            print("STOP 15 TRADES")
+            break
 
         if trade_open:
             if time.time() - last_trade_time > current_expiration * 60:
@@ -141,9 +140,9 @@ while True:
                 time.sleep(1)
                 continue
 
-        # 🔥 ENTRAR SOLO AL INICIO DE VELA
+        # 🔥 NUEVA VELA
         t = int(iq.get_server_timestamp())
-        if t % 60 > 2:
+        if t % 60 > 5:
             time.sleep(0.2)
             continue
 
@@ -153,10 +152,7 @@ while True:
             df_m5 = get_candles(pair, 300)
             df_1s = get_candles(pair, 1)
 
-            if df_m1 is None or df_m5 is None or df_1s is None:
-                continue
-
-            if len(df_m1) < 20 or len(df_m5) < 20 or len(df_1s) < 20:
+            if df_1s is None or len(df_1s) < 10:
                 continue
 
             current_candle = df_m1["from"].iloc[-1]
