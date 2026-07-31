@@ -1,117 +1,119 @@
 import numpy as np
 
-# ================= MICRO FLOW =================
+# ================= TENDENCIA =================
 
-def micro_flow(df):
-    closes = df["close"].values
+def get_trend(df):
 
-    up_moves = 0
-    down_moves = 0
-    rejections = 0
-    strength = 0
+    closes = df["close"].values[-10:]
+
+    up = 0
+    down = 0
 
     for i in range(1, len(closes)):
+        if closes[i] > closes[i-1]:
+            up += 1
+        elif closes[i] < closes[i-1]:
+            down += 1
 
-        diff = closes[i] - closes[i - 1]
-
-        # conteo de dirección
-        if diff > 0:
-            up_moves += 1
-        elif diff < 0:
-            down_moves += 1
-
-        # rechazo (cambio de dirección)
-        if i > 1:
-            prev = closes[i - 1] - closes[i - 2]
-            if prev * diff < 0:
-                rejections += 1
-
-        strength += abs(diff)
-
-    total = len(closes)
-
-    dominance = abs(up_moves - down_moves) / total if total > 0 else 0
-    avg_strength = strength / total if total > 0 else 0
-
-    direction = "call" if up_moves >= down_moves else "put"
-
-    return {
-        "direction": direction,
-        "dominance": dominance,
-        "rejections": rejections,
-        "strength": avg_strength,
-        "up": up_moves,
-        "down": down_moves
-    }
+    if up > down:
+        return "call"
+    elif down > up:
+        return "put"
+    else:
+        return None
 
 
-# ================= CLASIFICACIÓN =================
+# ================= PULLBACK =================
 
-def classify(flow):
+def detect_pullback(df):
 
-    # tendencia clara → continuación
-    if flow["dominance"] > 0.55 and flow["rejections"] <= 3:
-        return "continuation"
+    closes = df["close"].values
 
-    # mucha indecisión → posible reversión
-    if flow["rejections"] >= 4:
-        return "reversal"
+    # últimas 3 velas contra la tendencia
+    c1, c2, c3 = closes[-1], closes[-2], closes[-3]
 
-    return "neutral"
+    if c1 < c2 < c3:
+        return "bearish_pullback"
 
+    if c1 > c2 > c3:
+        return "bullish_pullback"
 
-# ================= SCORE =================
-
-def score_flow(flow):
-
-    score = 0
-
-    if flow["dominance"] > 0.6:
-        score += 2
-    elif flow["dominance"] > 0.5:
-        score += 1
-
-    if flow["rejections"] <= 2:
-        score += 2
-    elif flow["rejections"] <= 4:
-        score += 1
-
-    if flow["strength"] > 0:
-        score += 1
-
-    return score
+    return None
 
 
-# ================= DECISIÓN =================
+# ================= FUERZA =================
 
-def decide(flow):
+def strong_candle(df):
 
-    setup = classify(flow)
-    score = score_flow(flow)
+    last = df.iloc[-1]
 
-    # CONTINUACIÓN
-    if setup == "continuation":
-        return flow["direction"], score
+    body = abs(last["close"] - last["open"])
+    full = last["high"] - last["low"]
 
-    # REVERSIÓN
-    if setup == "reversal":
-        opposite = "put" if flow["direction"] == "call" else "call"
-        return opposite, score
+    if full == 0:
+        return False
 
-    # NEUTRAL → igual entra (para no bloquear el bot)
-    return flow["direction"], score
+    strength = body / full
+
+    return strength > 0.6
+
+
+# ================= EVITAR RANGO =================
+
+def is_not_range(df):
+
+    recent = df.tail(15)
+
+    high = recent["high"].max()
+    low = recent["low"].min()
+
+    avg = (recent["high"] - recent["low"]).mean()
+
+    return (high - low) > avg * 2
+
+
+# ================= DIRECCIÓN FINAL =================
+
+def hybrid_logic(df):
+
+    trend = get_trend(df)
+
+    if trend is None:
+        return None
+
+    pullback = detect_pullback(df)
+
+    # 🔥 CONTINUACIÓN (TU PATRÓN)
+    if trend == "call" and pullback == "bearish_pullback":
+        if strong_candle(df):
+            return "call"
+
+    if trend == "put" and pullback == "bullish_pullback":
+        if strong_candle(df):
+            return "put"
+
+    # 🔁 fallback (para no quedarse sin operar)
+    return trend
 
 
 # ================= FUNCIÓN PRINCIPAL =================
 
 def pro_signal(df_m1):
 
-    if df_m1 is None or len(df_m1) < 10:
+    if df_m1 is None or len(df_m1) < 20:
         return None, None
 
-    flow = micro_flow(df_m1)
+    # filtro de rango
+    if not is_not_range(df_m1):
+        # aún así devuelve algo para no congelar el bot
+        trend = get_trend(df_m1)
+        if trend:
+            return trend, 1
+        return None, None
 
-    direction, score = decide(flow)
+    direction = hybrid_logic(df_m1)
 
-    # 🔥 SIEMPRE OPERA (como pediste)
-    return direction, 1
+    if direction:
+        return direction, 1
+
+    return None, None
