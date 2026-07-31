@@ -1,125 +1,131 @@
 import numpy as np
-from datetime import datetime
 
-# ================= LATERALIDAD / TENDENCIA SUAVE =================
+# ================= UTILIDADES =================
 
-def is_valid_structure(df):
+def is_bullish(c):
+    return c["close"] > c["open"]
 
-    recent = df.tail(20)
+def is_bearish(c):
+    return c["close"] < c["open"]
 
-    highs = recent["high"]
-    lows = recent["low"]
+def body_size(c):
+    return abs(c["close"] - c["open"])
 
-    # estructura limpia (sin caos)
-    return (highs.max() - lows.min()) > (highs - lows).mean() * 3
+def candle_range(c):
+    return c["high"] - c["low"]
 
+def upper_wick(c):
+    return c["high"] - max(c["close"], c["open"])
 
-# ================= DETECTAR LÍNEA =================
-
-def detect_trendline(df):
-
-    lows = df["low"].values
-    highs = df["high"].values
-
-    touches = []
-
-    for i in range(len(df)-10, len(df)):
-        for j in range(i+1, len(df)):
-            if lows[i] < lows[j]:
-                touches.append((i, j, lows[i], lows[j]))
-
-    if len(touches) < 1:
-        return None
-
-    i1, i2, p1, p2 = touches[-1]
-
-    return "call", p1, p2, i1, i2
+def lower_wick(c):
+    return min(c["close"], c["open"]) - c["low"]
 
 
-# ================= FIBONACCI =================
+# ================= 1. DETECTAR TENDENCIA =================
 
-def fibonacci_zone(df):
+def detect_trend(df):
 
-    recent = df.tail(20)
+    last = df.tail(5)
 
-    high = recent["high"].max()
-    low = recent["low"].min()
+    bullish = sum(is_bullish(c) for _, c in last.iterrows())
+    bearish = sum(is_bearish(c) for _, c in last.iterrows())
 
-    fib_50 = high - (high - low) * 0.5
-    fib_618 = high - (high - low) * 0.618
+    if bullish >= 4:
+        return "call"
 
-    return fib_50, fib_618
+    if bearish >= 4:
+        return "put"
 
-
-# ================= PROYECTAR LÍNEA =================
-
-def project_line(p1, p2, i1, i2, current_index):
-
-    slope = (p2 - p1) / (i2 - i1)
-    return p2 + slope * (current_index - i2)
+    return None
 
 
-# ================= RETEST REAL =================
+# ================= 2. DETECTAR RETROCESO =================
 
-def valid_retest(df_m1, line_price):
+def detect_pullback(df, direction):
 
-    prev = df_m1.iloc[-2]
-    last = df_m1.iloc[-1]
+    candles = df.tail(3)
 
-    # estaba lejos
-    was_far = abs(prev["close"] - line_price) > (prev["high"] - prev["low"])
+    if direction == "call":
+        return all(is_bearish(c) for _, c in candles.iterrows())
 
-    # toca línea
-    touch = last["low"] <= line_price <= last["high"]
+    if direction == "put":
+        return all(is_bullish(c) for _, c in candles.iterrows())
 
-    return was_far and touch
+    return False
 
 
-# ================= EXPIRACIÓN =================
+# ================= 3. INDECISIÓN =================
 
-def time_to_close_m5(timestamp):
+def detect_indecision(df):
 
-    dt = datetime.fromtimestamp(timestamp)
-    minute = dt.minute
+    candles = df.tail(2)
 
-    return 5 - (minute % 5)
+    small = 0
+
+    for _, c in candles.iterrows():
+        if body_size(c) < candle_range(c) * 0.4:
+            small += 1
+
+    return small >= 1
+
+
+# ================= 4. RECHAZO =================
+
+def detect_rejection(df, direction):
+
+    last = df.iloc[-1]
+
+    if direction == "call":
+        return lower_wick(last) > body_size(last)
+
+    if direction == "put":
+        return upper_wick(last) > body_size(last)
+
+    return False
+
+
+# ================= 5. CONTINUACIÓN =================
+
+def confirmation(df, direction):
+
+    last = df.iloc[-1]
+
+    if direction == "call":
+        return is_bullish(last)
+
+    if direction == "put":
+        return is_bearish(last)
+
+    return False
 
 
 # ================= FUNCIÓN PRINCIPAL =================
 
 def pro_signal(df_m1, df_m5, df_htf):
 
-    # 1. ESTRUCTURA
-    if not is_valid_structure(df_m5):
+    # usamos M1 directo (tu nueva lógica)
+    df = df_m1
+
+    # 1. Tendencia
+    direction = detect_trend(df)
+    if direction is None:
         return None, None
 
-    # 2. LÍNEA
-    result = detect_trendline(df_m5)
-
-    if result is None:
+    # 2. Pullback
+    if not detect_pullback(df.iloc[:-1], direction):
         return None, None
 
-    direction, p1, p2, i1, i2 = result
-
-    current_index = len(df_m5) - 1
-    line_price = project_line(p1, p2, i1, i2, current_index)
-
-    price = df_m5["close"].iloc[-1]
-
-    # 3. FIBONACCI
-    fib_50, fib_618 = fibonacci_zone(df_m5)
-
-    in_fib_zone = fib_618 <= price <= fib_50
-
-    if not in_fib_zone:
+    # 3. Indecisión
+    if not detect_indecision(df):
         return None, None
 
-    # 4. RETEST
-    if not valid_retest(df_m1, line_price):
+    # 4. Rechazo
+    if not detect_rejection(df, direction):
         return None, None
 
-    # 5. EXPIRACIÓN
-    timestamp = df_m1["from"].iloc[-1]
-    expiration = time_to_close_m5(timestamp)
+    # 5. Confirmación
+    if not confirmation(df, direction):
+        return None, None
 
-    return "call", expiration
+    # 6. Expiración fija 1 minuto
+    return direction, 1
