@@ -16,22 +16,17 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 2000
+AMOUNT = 7000
 
-PAIRS = [
-    "EURUSD",
-    "GBPUSD",
-    "EURGBP",
-    "USDCHF",
-    "EURJPY"
-]
+# 🔥 SOLO EURUSD
+PAIR = "EURUSD"
 
 trade_open = False
 last_trade_time = 0
 bot_active = True
 last_update_id = None
 current_expiration = 1
-last_candle_time = {}
+last_candle_time = None
 
 # 🔥 CONTROL DE OPERACIONES
 trade_count = 0
@@ -86,8 +81,17 @@ if not iq.check_connect():
 
 iq.change_balance("PRACTICE")
 
-print("🔥 BOT ACTIVO")
-send("🔥 BOT ACTIVO")
+print("🔥 BOT ACTIVO (EURUSD)")
+send("🔥 BOT ACTIVO (EURUSD)")
+
+# ================= VALIDAR MERCADO =================
+
+def is_open(pair):
+    try:
+        assets = iq.get_all_open_time()
+        return assets["binary"][pair]["open"]
+    except:
+        return False
 
 # ================= DATOS =================
 
@@ -105,19 +109,24 @@ def get_candles(pair, tf):
 def trade(pair, direction, expiration):
     global trade_open, last_trade_time, current_expiration, trade_count
 
-    status, _ = iq.buy(AMOUNT, pair, direction, expiration)
+    for _ in range(2):  # 🔁 reintento automático
 
-    if status:
-        trade_open = True
-        last_trade_time = time.time()
-        current_expiration = expiration
-        trade_count += 1
+        status, result = iq.buy(AMOUNT, pair, direction, expiration)
 
-        msg = f"🎯 {pair} {direction.upper()} ({expiration}m) | #{trade_count}"
-        print(msg)
-        send(msg)
-    else:
-        print(f"❌ No se pudo abrir operación en {pair}")
+        if status:
+            trade_open = True
+            last_trade_time = time.time()
+            current_expiration = expiration
+            trade_count += 1
+
+            msg = f"🎯 {pair} {direction.upper()} ({expiration}m) | #{trade_count}"
+            print(msg)
+            send(msg)
+            return
+
+        time.sleep(1)
+
+    print(f"❌ Falló operación en {pair}")
 
 # ================= LOOP =================
 
@@ -129,11 +138,17 @@ while True:
             time.sleep(1)
             continue
 
-        # 🔥 DETENER DESPUÉS DE 15 TRADES
+        # 🔥 STOP DESPUÉS DE 15 TRADES
         if trade_count >= MAX_TRADES:
             send("🛑 15 OPERACIONES COMPLETADAS")
             print("STOP 15 TRADES")
             break
+
+        # ❌ SI EL PAR ESTÁ CERRADO
+        if not is_open(PAIR):
+            print("EURUSD cerrado...")
+            time.sleep(5)
+            continue
 
         # ⏳ Esperar cierre de operación
         if trade_open:
@@ -143,25 +158,26 @@ while True:
                 time.sleep(1)
                 continue
 
-        for pair in PAIRS:
+        # 📊 DATOS
+        df_m1 = get_candles(PAIR, 60)
 
-            df_m1 = get_candles(pair, 60)
+        if df_m1 is None or len(df_m1) < 20:
+            time.sleep(1)
+            continue
 
-            if df_m1 is None or len(df_m1) < 10:
-                continue
+        current_candle = df_m1["from"].iloc[-1]
 
-            current_candle = df_m1["from"].iloc[-1]
+        # 🔥 SOLO UNA VEZ POR VELA
+        if last_candle_time == current_candle:
+            time.sleep(1)
+            continue
 
-            # 🔥 SOLO UNA VEZ POR VELA
-            if last_candle_time.get(pair) == current_candle:
-                continue
+        # 🧠 ESTRATEGIA
+        signal, expiration = pro_signal(df_m1)
 
-            signal, expiration = pro_signal(df_m1)
-
-            if signal:
-                trade(pair, signal, expiration)
-                last_candle_time[pair] = current_candle
-                break
+        if signal:
+            trade(PAIR, signal, expiration)
+            last_candle_time = current_candle
 
         time.sleep(1)
 
