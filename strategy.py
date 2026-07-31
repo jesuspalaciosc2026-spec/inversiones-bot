@@ -34,10 +34,8 @@ def micro_flow(df_1s):
 
     return {
         "direction": direction,
-        "up_moves": up_moves,
-        "down_moves": down_moves,
-        "rejections": rejections,
         "dominance": dominance,
+        "rejections": rejections,
         "volatility": volatility
     }
 
@@ -45,41 +43,26 @@ def micro_flow(df_1s):
 
 def classify_flow(flow):
 
-    # continuación fuerte
-    if flow["dominance"] > 0.6 and flow["rejections"] < 3:
+    # 🔥 continuación (más flexible)
+    if flow["dominance"] > 0.52 and flow["rejections"] <= 4:
         return "continuation"
 
-    # reversión
-    if flow["rejections"] >= 4 and flow["dominance"] < 0.4:
+    # 🔁 reversión (más flexible)
+    if flow["rejections"] >= 3 and flow["dominance"] < 0.48:
         return "reversal"
 
     return None
 
-# ================= FILTROS =================
+# ================= FILTRO SUAVE =================
 
 def strong_flow(flow):
-    return flow["volatility"] > 0 and flow["dominance"] > 0.5
-
-
-def not_noise(df_1s):
-    closes = df_1s["close"].values
-
-    if len(closes) < 10:
-        return False
-
-    movement = abs(closes[-1] - closes[0])
-    noise = np.std(closes)
-
-    return movement > noise * 0.5
+    return flow["dominance"] > 0.48
 
 # ================= FUNCIÓN PRINCIPAL =================
 
 def pro_signal(df_m1, df_m5, df_1s):
 
     if df_1s is None or len(df_1s) < 20:
-        return None, None
-
-    if not not_noise(df_1s):
         return None, None
 
     flow = micro_flow(df_1s)
@@ -92,11 +75,11 @@ def pro_signal(df_m1, df_m5, df_1s):
     if setup is None:
         return None, None
 
-    # continuación
+    # CONTINUACIÓN
     if setup == "continuation":
         return flow["direction"], 1
 
-    # reversión
+    # REVERSIÓN
     if setup == "reversal":
         opposite = "put" if flow["direction"] == "call" else "call"
         return opposite, 1
