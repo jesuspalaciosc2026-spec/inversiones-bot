@@ -36,19 +36,16 @@ def save_memory(mem):
 
 
 # =========================================================
-# 🧠 CONTEXTO (M1)
+# 🧠 CONTEXTO (M1) MÁS FLEXIBLE
 # =========================================================
 
 def get_context(df):
 
-    highs = df["high"].tail(5).values
-    lows = df["low"].tail(5).values
+    highs = df["high"].tail(3).values
+    lows = df["low"].tail(3).values
 
-    bullish = all(highs[i] > highs[i-1] for i in range(1, len(highs))) and \
-              all(lows[i] > lows[i-1] for i in range(1, len(lows)))
-
-    bearish = all(highs[i] < highs[i-1] for i in range(1, len(highs))) and \
-              all(lows[i] < lows[i-1] for i in range(1, len(lows)))
+    bullish = highs[-1] > highs[-2] and lows[-1] > lows[-2]
+    bearish = highs[-1] < highs[-2] and lows[-1] < lows[-2]
 
     if bullish:
         return "call"
@@ -64,37 +61,24 @@ def get_context(df):
 # =========================================================
 
 def get_ticks(df):
-    return df.tail(12)
+    return df.tail(10)
 
 
 def micro_analysis(ticks):
 
-    up = 0
-    down = 0
-    rejections = 0
+    up, down = 0, 0
 
     for i in range(len(ticks)):
-        o = ticks.iloc[i]["open"]
-        c = ticks.iloc[i]["close"]
-        h = ticks.iloc[i]["high"]
-        l = ticks.iloc[i]["low"]
-
-        body = abs(c - o)
-        wick = (h - l) - body
-
-        if c > o:
+        if ticks.iloc[i]["close"] > ticks.iloc[i]["open"]:
             up += 1
         else:
             down += 1
 
-        if wick > body:
-            rejections += 1
-
-    return up, down, rejections
+    return up, down
 
 
 # =========================================================
-# 🧠 TRAMPA (MANIPULACIÓN)
+# 🧠 TRAMPA
 # =========================================================
 
 def detect_trap(ticks):
@@ -102,55 +86,31 @@ def detect_trap(ticks):
     last = ticks.iloc[-1]
     prev = ticks.iloc[-2]
 
-    if last["high"] > prev["high"] and last["close"] < prev["high"]:
+    if last["high"] > prev["high"] and last["close"] < prev["close"]:
         return "put"
 
-    if last["low"] < prev["low"] and last["close"] > prev["low"]:
+    if last["low"] < prev["low"] and last["close"] > prev["close"]:
         return "call"
 
     return None
 
 
 # =========================================================
-# 🧠 PATRÓN
+# 🎯 SCORE MÁS AGRESIVO
 # =========================================================
 
-def detect_pattern(direction, df_m1):
+def build_score(direction, ticks, mem):
 
-    last = df_m1.iloc[-1]
-    prev = df_m1.iloc[-2]
-
-    if direction == "call" and last["close"] > prev["close"]:
-        return "trend_call"
-
-    if direction == "put" and last["close"] < prev["close"]:
-        return "trend_put"
-
-    return "trap_call" if direction == "call" else "trap_put"
-
-
-# =========================================================
-# 🎯 SCORE IA
-# =========================================================
-
-def build_score(direction, ticks, pattern, mem):
-
-    up, down, rejections = micro_analysis(ticks)
+    up, down = micro_analysis(ticks)
 
     score = 0
 
-    # dominancia
-    if direction == "call" and up > down:
-        score += 25
+    if direction == "call" and up >= down:
+        score += 20
 
-    if direction == "put" and down > up:
-        score += 25
+    if direction == "put" and down >= up:
+        score += 20
 
-    # rechazos
-    if rejections >= 2:
-        score += 15
-
-    # movimiento interno
     move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
 
     if direction == "call" and move > 0:
@@ -159,28 +119,18 @@ def build_score(direction, ticks, pattern, mem):
     if direction == "put" and move < 0:
         score += 15
 
-    # IA confianza
-    confidence = mem["confidence"].get(pattern, 1.0)
-    score *= confidence
-
     return score
 
 
 # =========================================================
-# 🚀 SEÑAL PRINCIPAL
+# 🚀 SEÑAL AGRESIVA
 # =========================================================
 
 def pro_signal(df_m1, df_micro):
 
-    mem = load_memory()
-
     if df_m1 is None or df_micro is None:
         return None, None, None
 
-    if len(df_m1) < 20 or len(df_micro) < 20:
-        return None, None, None
-
-    # CONTEXTO
     direction = get_context(df_m1)
 
     if direction is None:
@@ -188,49 +138,23 @@ def pro_signal(df_m1, df_micro):
 
     ticks = get_ticks(df_micro)
 
-    # TRAMPA
     trap = detect_trap(ticks)
     if trap:
         direction = trap
 
-    # PATRÓN
-    pattern = detect_pattern(direction, df_m1)
+    score = build_score(direction, ticks, None)
 
-    # SCORE
-    score = build_score(direction, ticks, pattern, mem)
+    print(f"🔥 AGRESIVO → score: {score} | dir: {direction}")
 
-    print(f"DEBUG → score: {score}, dir: {direction}, pattern: {pattern}")
-
-    # 🔥 FILTRO BALANCEADO
-    if score < 30:
+    # 🔥 UMBRAL MUY BAJO
+    if score < 15:
         return None, None, None
 
-    # FILTROS
-    last = df_m1.iloc[-1]
-
-    body = abs(last["close"] - last["open"])
-    avg = (df_m1["high"] - df_m1["low"]).tail(10).mean()
-
-    # evitar velas locas
-    if body > avg * 2.5:
-        return None, None, None
-
-    price = last["close"]
-    high = df_m1["high"].tail(10).max()
-    low = df_m1["low"].tail(10).min()
-
-    # evitar extremos (más flexible)
-    if direction == "call" and abs(price - high) < 0.00005:
-        return None, None, None
-
-    if direction == "put" and abs(price - low) < 0.00005:
-        return None, None, None
-
-    return direction, 1, pattern
+    return direction, 1, "aggressive"
 
 
 # =========================================================
-# 🧠 IA APRENDIZAJE
+# 🧠 IA
 # =========================================================
 
 def update_result(result, pattern):
@@ -239,13 +163,7 @@ def update_result(result, pattern):
 
     if result == 1:
         mem["wins"] += 1
-        mem["patterns"][pattern] += 1
-        mem["confidence"][pattern] *= 1.05
     else:
         mem["losses"] += 1
-        mem["confidence"][pattern] *= 0.95
-
-    # límites
-    mem["confidence"][pattern] = max(0.5, min(2.0, mem["confidence"][pattern]))
 
     save_memory(mem)
