@@ -1,149 +1,159 @@
-import json
-import os
+import pandas as pd
+import numpy as np
 
-MEMORY_FILE = "ai_memory.json"
+# =============================
+# INDICADORES
+# =============================
+def add_indicators(df):
+    df["ema20"] = df["close"].ewm(span=20).mean()
+    df["ema50"] = df["close"].ewm(span=50).mean()
 
-# =========================================================
-# 🧠 MEMORIA IA
-# =========================================================
+    df["high_prev"] = df["high"].shift(1)
+    df["low_prev"] = df["low"].shift(1)
 
-def load_memory():
-    if not os.path.exists(MEMORY_FILE):
-        return {
-            "wins": 0,
-            "losses": 0,
-            "patterns": {
-                "trend_call": 0,
-                "trend_put": 0,
-                "trap_call": 0,
-                "trap_put": 0,
-                "aggressive": 0
-            },
-            "confidence": {
-                "trend_call": 1.0,
-                "trend_put": 1.0,
-                "trap_call": 1.0,
-                "trap_put": 1.0,
-                "aggressive": 1.0
-            }
-        }
-
-    with open(MEMORY_FILE, "r") as f:
-        return json.load(f)
+    return df
 
 
-def save_memory(mem):
-    with open(MEMORY_FILE, "w") as f:
-        json.dump(mem, f)
+# =============================
+# TENDENCIA
+# =============================
+def detect_trend(df):
+    last = df.iloc[-1]
+
+    if last["ema20"] > last["ema50"]:
+        return "up"
+    elif last["ema20"] < last["ema50"]:
+        return "down"
+    else:
+        return None
 
 
-# =========================================================
-# 📊 CONTEXTO
-# =========================================================
-
-def get_context(df):
+# =============================
+# ESTRUCTURA (HH HL / LH LL)
+# =============================
+def market_structure(df):
     highs = df["high"].tail(5).values
     lows = df["low"].tail(5).values
 
-    bullish = all(highs[i] > highs[i-1] for i in range(1, len(highs))) and \
-              all(lows[i] > lows[i-1] for i in range(1, len(lows)))
+    if all(x < y for x, y in zip(highs, highs[1:])) and all(x < y for x, y in zip(lows, lows[1:])):
+        return "bullish"
 
-    bearish = all(highs[i] < highs[i-1] for i in range(1, len(highs))) and \
-              all(lows[i] < lows[i-1] for i in range(1, len(lows)))
-
-    if bullish:
-        return "call"
-    if bearish:
-        return "put"
+    if all(x > y for x, y in zip(highs, highs[1:])) and all(x > y for x, y in zip(lows, lows[1:])):
+        return "bearish"
 
     return None
 
 
-# =========================================================
-# ⚡ MICROESTRUCTURA
-# =========================================================
+# =============================
+# PULLBACK SIMPLE
+# =============================
+def detect_pullback(df, trend):
+    candles = df.tail(4)
 
-def micro_analysis(df):
-    up = sum(1 for i in range(len(df)) if df.iloc[i]["close"] > df.iloc[i]["open"])
-    down = sum(1 for i in range(len(df)) if df.iloc[i]["close"] < df.iloc[i]["open"])
+    if trend == "up":
+        return all(c["close"] < c["open"] for _, c in candles.iterrows())
 
-    return up, down
+    if trend == "down":
+        return all(c["close"] > c["open"] for _, c in candles.iterrows())
+
+    return False
 
 
-# =========================================================
-# 🎯 PRO SIGNAL
-# =========================================================
+# =============================
+# VELA FUERTE
+# =============================
+def strong_candle(df, direction):
+    c = df.iloc[-1]
+    body = abs(c["close"] - c["open"])
+    wick = (c["high"] - c["low"])
 
+    if wick == 0:
+        return False
+
+    strength = body / wick
+
+    if direction == "call":
+        return c["close"] > c["open"] and strength > 0.6
+
+    if direction == "put":
+        return c["close"] < c["open"] and strength > 0.6
+
+    return False
+
+
+# =============================
+# FILTRO DE RANGO
+# =============================
+def is_ranging(df):
+    recent = df.tail(20)
+    high = recent["high"].max()
+    low = recent["low"].min()
+
+    return (high - low) < (df["close"].mean() * 0.002)
+
+
+# =============================
+# ESTRATEGIA PRINCIPAL
+# =============================
 def pro_signal(df_m1, df_5s, aggressive=False):
 
-    mem = load_memory()
+    df_m1 = add_indicators(df_m1)
 
-    # ❗ SIEMPRE 3 VALORES
-    if df_m1 is None or df_5s is None:
+    trend = detect_trend(df_m1)
+    structure = market_structure(df_m1)
+
+    if trend is None or structure is None:
         return None, None, None
 
-    if len(df_m1) < 10 or len(df_5s) < 10:
-        return None, None, None
+    if not aggressive:
+        if is_ranging(df_m1):
+            return None, None, None
 
-    direction = get_context(df_m1)
+    # =============================
+    # CALL
+    # =============================
+    if trend == "up" and structure == "bullish":
+        if detect_pullback(df_m1, "up"):
+            if strong_candle(df_m1, "call"):
+                return "call", 1, "pullback_up"
 
-    if direction is None:
-        return None, None, None
+    # =============================
+    # PUT
+    # =============================
+    if trend == "down" and structure == "bearish":
+        if detect_pullback(df_m1, "down"):
+            if strong_candle(df_m1, "put"):
+                return "put", 1, "pullback_down"
 
-    ticks = df_5s.tail(10)
-    up, down = micro_analysis(ticks)
-
-    score = 0
-
-    if direction == "call" and up > down:
-        score += 40
-
-    if direction == "put" and down > up:
-        score += 40
-
-    # IA aprendizaje
-    confidence = mem["confidence"].get("aggressive", 1.0)
-    score *= confidence
-
-    # 🔥 MODO AGRESIVO
-    threshold = 50
+    # =============================
+    # MODO AGRESIVO (sin filtros duros)
+    # =============================
     if aggressive:
-        threshold = 20
+        last = df_m1.iloc[-1]
 
-    if score < threshold:
-        return None, None, None
+        if last["close"] > last["open"]:
+            return "call", 1, "aggressive"
 
-    # evitar velas locas
-    last = df_m1.iloc[-1]
-    body = abs(last["close"] - last["open"])
-    avg = (df_m1["high"] - df_m1["low"]).tail(10).mean()
+        if last["close"] < last["open"]:
+            return "put", 1, "aggressive"
 
-    if body > avg * 1.5:
-        return None, None, None
-
-    return direction, 1, "aggressive"
+    return None, None, None
 
 
-# =========================================================
-# 🧠 ACTUALIZAR IA
-# =========================================================
+# =============================
+# RESULTADOS (GESTIÓN)
+# =============================
+stats = {
+    "wins": 0,
+    "loss": 0
+}
 
 def update_result(result, pattern):
-
-    mem = load_memory()
-
-    if pattern not in mem["confidence"]:
-        mem["confidence"][pattern] = 1.0
-        mem["patterns"][pattern] = 0
+    global stats
 
     if result == 1:
-        mem["wins"] += 1
-        mem["patterns"][pattern] += 1
-        mem["confidence"][pattern] *= 1.05
+        stats["wins"] += 1
     else:
-        mem["losses"] += 1
-        mem["confidence"][pattern] *= 0.95
+        stats["loss"] += 1
 
-    mem["confidence"][pattern] = max(0.5, min(2.0, mem["confidence"][pattern]))
-
-    save_memory(mem)
+    print(f"📊 Resultado → {pattern} | Wins: {stats['wins']} | Loss: {stats['loss']}")
