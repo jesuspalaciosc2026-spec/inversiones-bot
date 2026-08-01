@@ -60,11 +60,11 @@ def get_context(df):
 
 
 # =========================================================
-# 📊 MICROESTRUCTURA (5s)
+# 📊 MICROESTRUCTURA
 # =========================================================
 
-def get_ticks(df_5s):
-    return df_5s.tail(12)
+def get_ticks(df):
+    return df.tail(12)
 
 
 def micro_analysis(ticks):
@@ -94,7 +94,7 @@ def micro_analysis(ticks):
 
 
 # =========================================================
-# 🧠 DETECTAR MANIPULACIÓN
+# 🧠 TRAMPA (MANIPULACIÓN)
 # =========================================================
 
 def detect_trap(ticks):
@@ -112,7 +112,7 @@ def detect_trap(ticks):
 
 
 # =========================================================
-# 🧠 DETECTAR PATRÓN
+# 🧠 PATRÓN
 # =========================================================
 
 def detect_pattern(direction, df_m1):
@@ -130,7 +130,7 @@ def detect_pattern(direction, df_m1):
 
 
 # =========================================================
-# 🎯 SCORE CON IA
+# 🎯 SCORE IA
 # =========================================================
 
 def build_score(direction, ticks, pattern, mem):
@@ -139,23 +139,27 @@ def build_score(direction, ticks, pattern, mem):
 
     score = 0
 
+    # dominancia
     if direction == "call" and up > down:
-        score += 30
+        score += 25
 
     if direction == "put" and down > up:
-        score += 30
+        score += 25
 
-    if rejections >= 3:
-        score += 20
+    # rechazos
+    if rejections >= 2:
+        score += 15
 
+    # movimiento interno
     move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
 
     if direction == "call" and move > 0:
-        score += 20
+        score += 15
 
     if direction == "put" and move < 0:
-        score += 20
+        score += 15
 
+    # IA confianza
     confidence = mem["confidence"].get(pattern, 1.0)
     score *= confidence
 
@@ -163,68 +167,75 @@ def build_score(direction, ticks, pattern, mem):
 
 
 # =========================================================
-# 🚀 PRO SIGNAL FINAL
+# 🚀 SEÑAL PRINCIPAL
 # =========================================================
 
-def pro_signal(df_m1, df_5s):
+def pro_signal(df_m1, df_micro):
 
     mem = load_memory()
 
-    if df_m1 is None or df_5s is None:
+    if df_m1 is None or df_micro is None:
         return None, None, None
 
-    if len(df_m1) < 20 or len(df_5s) < 20:
+    if len(df_m1) < 20 or len(df_micro) < 20:
         return None, None, None
 
+    # CONTEXTO
     direction = get_context(df_m1)
 
     if direction is None:
         return None, None, None
 
-    ticks = get_ticks(df_5s)
+    ticks = get_ticks(df_micro)
 
+    # TRAMPA
     trap = detect_trap(ticks)
     if trap:
         direction = trap
 
+    # PATRÓN
     pattern = detect_pattern(direction, df_m1)
 
+    # SCORE
     score = build_score(direction, ticks, pattern, mem)
 
-    if score < 50:
+    print(f"DEBUG → score: {score}, dir: {direction}, pattern: {pattern}")
+
+    # 🔥 FILTRO BALANCEADO
+    if score < 30:
         return None, None, None
 
+    # FILTROS
     last = df_m1.iloc[-1]
 
     body = abs(last["close"] - last["open"])
     avg = (df_m1["high"] - df_m1["low"]).tail(10).mean()
 
-    if body > avg * 1.7:
+    # evitar velas locas
+    if body > avg * 2.5:
         return None, None, None
 
     price = last["close"]
     high = df_m1["high"].tail(10).max()
     low = df_m1["low"].tail(10).min()
 
-    if direction == "call" and abs(price - high) < 0.00015:
+    # evitar extremos (más flexible)
+    if direction == "call" and abs(price - high) < 0.00005:
         return None, None, None
 
-    if direction == "put" and abs(price - low) < 0.00015:
+    if direction == "put" and abs(price - low) < 0.00005:
         return None, None, None
 
     return direction, 1, pattern
 
 
 # =========================================================
-# 🧠 IA ADAPTATIVA
+# 🧠 IA APRENDIZAJE
 # =========================================================
 
-def update_ai(result, pattern):
+def update_result(result, pattern):
 
     mem = load_memory()
-
-    if pattern is None:
-        return
 
     if result == 1:
         mem["wins"] += 1
@@ -234,14 +245,7 @@ def update_ai(result, pattern):
         mem["losses"] += 1
         mem["confidence"][pattern] *= 0.95
 
+    # límites
     mem["confidence"][pattern] = max(0.5, min(2.0, mem["confidence"][pattern]))
 
     save_memory(mem)
-
-
-# =========================================================
-# 🔁 COMPATIBILIDAD CON BOT
-# =========================================================
-
-def update_result(result, pattern):
-    update_ai(result, pattern)
