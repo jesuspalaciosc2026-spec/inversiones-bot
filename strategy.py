@@ -1,12 +1,60 @@
 import numpy as np
 
-# ================= TICKS =================
+# =========================================================
+# 🧠 MEMORIA ADAPTATIVA
+# =========================================================
+
+trade_history = []  # 1 = win, 0 = loss
+
+
+def update_result(result):
+    trade_history.append(result)
+    if len(trade_history) > 20:
+        trade_history.pop(0)
+
+
+def get_winrate():
+    if len(trade_history) < 5:
+        return 0.5
+    return sum(trade_history) / len(trade_history)
+
+
+# =========================================================
+# ⚙️ ADAPTACIÓN DINÁMICA
+# =========================================================
+
+def dynamic_threshold():
+
+    winrate = get_winrate()
+
+    if winrate < 0.4:
+        return 75  # más exigente
+
+    elif winrate > 0.65:
+        return 60  # más agresivo
+
+    return 65  # normal
+
+
+def market_blocked():
+
+    if len(trade_history) < 5:
+        return False
+
+    # bloqueo por mala racha
+    if trade_history[-3:] == [0, 0, 0]:
+        return True
+
+    return False
+
+
+# =========================================================
+# 📊 MICROESTRUCTURA (VELA COMPLETA)
+# =========================================================
 
 def get_ticks(df_5s):
     return df_5s.tail(12)
 
-
-# ================= EFICIENCIA =================
 
 def efficiency(ticks):
 
@@ -22,8 +70,6 @@ def efficiency(ticks):
     return abs(total_move) / path
 
 
-# ================= ESFUERZO VS RESULTADO =================
-
 def effort_vs_result(ticks):
 
     total_move = abs(ticks.iloc[-1]["close"] - ticks.iloc[0]["open"])
@@ -37,17 +83,19 @@ def effort_vs_result(ticks):
     return total_move / path
 
 
-# ================= TIEMPO EN ZONA =================
+def pressure(ticks):
 
-def time_in_zone(ticks):
+    up = 0
+    down = 0
 
-    prices = ticks["close"].round(5)
-    _, counts = np.unique(prices, return_counts=True)
+    for i in range(len(ticks)):
+        if ticks.iloc[i]["close"] > ticks.iloc[i]["open"]:
+            up += 1
+        else:
+            down += 1
 
-    return counts.max()
+    return up, down
 
-
-# ================= MICRO RETROCESOS =================
 
 def micro_pullbacks(ticks):
 
@@ -66,23 +114,25 @@ def micro_pullbacks(ticks):
     return reversals
 
 
-# ================= PRESIÓN =================
+def time_in_zone(ticks):
 
-def pressure(ticks):
+    prices = ticks["close"].round(5)
+    _, counts = np.unique(prices, return_counts=True)
 
-    up = 0
-    down = 0
-
-    for i in range(len(ticks)):
-        if ticks.iloc[i]["close"] > ticks.iloc[i]["open"]:
-            up += 1
-        else:
-            down += 1
-
-    return up, down
+    return counts.max()
 
 
-# ================= FUERZA REAL =================
+def close_position(ticks):
+
+    close = ticks.iloc[-1]["close"]
+    high = ticks["high"].max()
+    low = ticks["low"].min()
+
+    if high == low:
+        return 0.5
+
+    return (close - low) / (high - low)
+
 
 def result_strength(ticks):
 
@@ -100,8 +150,6 @@ def result_strength(ticks):
     return abs(close_p - open_p) / total
 
 
-# ================= FASES =================
-
 def phase_analysis(ticks):
 
     p1 = ticks.iloc[0:3]
@@ -115,35 +163,6 @@ def phase_analysis(ticks):
 
     return m1, m4, s1, s4
 
-
-# ================= CIERRE DOMINANTE =================
-
-def close_position(ticks):
-
-    close = ticks.iloc[-1]["close"]
-    high = ticks["high"].max()
-    low = ticks["low"].min()
-
-    if high == low:
-        return 0.5
-
-    return (close - low) / (high - low)
-
-
-# ================= CONTEXTO =================
-
-def short_context(df_5s):
-
-    if len(df_5s) < 36:
-        return 0
-
-    last = df_5s.tail(36)
-    closes = last["close"].values
-
-    return closes[-1] - closes[0]
-
-
-# ================= MANIPULACIÓN =================
 
 def manipulation(ticks):
 
@@ -159,7 +178,20 @@ def manipulation(ticks):
     return False
 
 
-# ================= SCORE =================
+def short_context(df_5s):
+
+    if len(df_5s) < 36:
+        return 0
+
+    last = df_5s.tail(36)
+    closes = last["close"].values
+
+    return closes[-1] - closes[0]
+
+
+# =========================================================
+# 🎯 SCORE INTELIGENTE
+# =========================================================
 
 def score_candle(ticks, df_5s):
 
@@ -192,15 +224,15 @@ def score_candle(ticks, df_5s):
     if strength > 0.5:
         score += 10
 
-    # ruido bajo
+    # poco ruido
     if pullbacks <= 3:
         score += 10
 
-    # no lateral
+    # evitar lateralidad
     if zone < 4:
         score += 10
 
-    # aceleración
+    # aceleración final
     if s4 > s1:
         score += 10
 
@@ -230,23 +262,31 @@ def score_candle(ticks, df_5s):
     return score, direction, total_move, m1, m4
 
 
-# ================= PRO SIGNAL =================
+# =========================================================
+# 🚀 PRO SIGNAL FINAL
+# =========================================================
 
 def pro_signal(df_m1, df_5s):
+
+    # bloqueo adaptativo
+    if market_blocked():
+        return None, None
 
     if df_5s is None or len(df_5s) < 20:
         return None, None
 
     ticks = get_ticks(df_5s)
 
-    # evitar manipulación directa
+    # evitar trampas
     if manipulation(ticks):
         return None, None
 
     score, direction, move, m1, m4 = score_candle(ticks, df_5s)
 
-    # 🔥 UMBRAL
-    if score < 65 or direction is None:
+    threshold = dynamic_threshold()
+
+    # filtro final
+    if score < threshold or direction is None:
         return None, None
 
     # ================= CONTINUACIÓN =================
