@@ -1,157 +1,153 @@
 import time
 import os
-import requests
-import pandas as pd
-import sys
 import logging
-
 from iqoptionapi.stable_api import IQ_Option
+
 from strategy import pro_signal, update_result
 
-# ================= CONFIG =================
-
-logging.getLogger().setLevel(logging.CRITICAL)
-sys.stderr = open(os.devnull, 'w')
+# =========================================================
+# ⚙️ CONFIG
+# =========================================================
 
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 1578
-PAIR = "EURUSD-OTC"
+PAIRS = ["EURUSD", "GBPUSD", "EURJPY", "EURGBP", "USDCHF"]
+AMOUNT = 20000
+EXPIRATION = 1  # 1 minuto
 
-trade_open = False
-last_trade_time = 0
-current_expiration = 1
+# =========================================================
+# 🔇 LOGS OFF
+# =========================================================
 
-last_trade_id = None
+logging.getLogger().setLevel(logging.CRITICAL)
 
-# ================= TELEGRAM =================
+# =========================================================
+# 🔌 CONEXIÓN
+# =========================================================
 
-def send(msg):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=5
-        )
-    except Exception:
-        pass
-
-
-# ================= IQ OPTION =================
-
+print("🔌 Conectando a IQ Option...")
 iq = IQ_Option(EMAIL, PASSWORD)
 iq.connect()
 
 if not iq.check_connect():
-    print("❌ Error conexión IQ Option")
+    print("❌ Error de conexión")
     exit()
 
-iq.change_balance("PRACTICE")
+print("✅ Conectado correctamente")
 
-print("🔥 BOT ACTIVO")
-send("🔥 BOT ACTIVO")
+# =========================================================
+# 📊 DATA
+# =========================================================
 
-
-# ================= DATOS =================
-
-def get_candles(pair, tf, count=50):
-    try:
-        data = iq.get_candles(pair, tf, count, time.time())
-        df = pd.DataFrame(data)
-        df.rename(columns={"max": "high", "min": "low"}, inplace=True)
-        return df
-    except:
+def get_candles(pair, timeframe, count):
+    candles = iq.get_candles(pair, timeframe, count, time.time())
+    if candles is None:
         return None
 
+    import pandas as pd
+    df = pd.DataFrame(candles)
 
-# ================= TRADE =================
+    df.rename(columns={
+        "max": "high",
+        "min": "low"
+    }, inplace=True)
 
-def trade(direction):
+    return df
 
-    global trade_open, last_trade_time, last_trade_id
+# =========================================================
+# 💰 RESULTADO REAL
+# =========================================================
 
-    status, trade_id = iq.buy(AMOUNT, PAIR, direction, current_expiration)
+def check_result(order_id):
 
-    if status:
-        trade_open = True
-        last_trade_time = time.time()
-        last_trade_id = trade_id
+    while True:
+        check, win = iq.check_win_v4(order_id)
 
-        msg = f"🎯 {PAIR} {direction.upper()} ({current_expiration}m)"
-        print(msg)
-        send(msg)
-    else:
-        print("❌ No se pudo abrir operación")
+        if check:
+            if win > 0:
+                return 1  # WIN
+            else:
+                return 0  # LOSS
 
+        time.sleep(1)
 
-# ================= RESULTADO =================
+# =========================================================
+# 🚀 BOT LOOP
+# =========================================================
 
-def check_result():
-
-    global trade_open, last_trade_id
-
-    if not trade_open or last_trade_id is None:
-        return
-
-    try:
-        result = iq.check_win_v4(last_trade_id)
-
-        if result is None:
-            return
-
-        trade_open = False
-
-        if result > 0:
-            print("✅ WIN")
-            send("✅ WIN")
-            update_result(1)
-        else:
-            print("❌ LOSS")
-            send("❌ LOSS")
-            update_result(0)
-
-        last_trade_id = None
-
-    except:
-        pass
-
-
-# ================= LOOP PRINCIPAL =================
+trade_open = False
+last_trade_time = 0
 
 while True:
     try:
 
-        # revisar resultado
-        check_result()
-
-        # evitar múltiples operaciones
         if trade_open:
-            time.sleep(0.5)
+            time.sleep(1)
             continue
 
-        t = int(iq.get_server_timestamp())
+        for pair in PAIRS:
 
-        # 🔥 ENTRADA EXACTA SEGUNDO 59
-        if t % 60 < 59:
-            time.sleep(0.2)
-            continue
+            # =========================
+            # 📊 DATOS
+            # =========================
+            df_m1 = get_candles(pair, 60, 50)
+            df_5s = get_candles(pair, 5, 50)
 
-        df_m1 = get_candles(PAIR, 60, 50)
-        df_5s = get_candles(PAIR, 5, 50)
+            if df_m1 is None or df_5s is None:
+                continue
 
-        if df_m1 is None or df_5s is None:
-            continue
+            # =========================
+            # 🧠 SEÑAL IA
+            # =========================
+            signal, expiration, pattern = pro_signal(df_m1, df_5s)
 
-        signal, expiration = pro_signal(df_m1, df_5s)
+            if signal is None:
+                continue
 
-        if signal:
-            trade(signal)
+            # evitar overtrading
+            if time.time() - last_trade_time < 60:
+                continue
+
+            print(f"🎯 SEÑAL {pair} → {signal.upper()} | patrón: {pattern}")
+
+            # =========================
+            # 💸 ENTRADA
+            # =========================
+            status, order_id = iq.buy(
+                AMOUNT,
+                pair,
+                signal,
+                expiration
+            )
+
+            if status:
+                print("✅ OPERACIÓN ABIERTA")
+                trade_open = True
+                last_trade_time = time.time()
+
+                # =========================
+                # 🧾 RESULTADO
+                # =========================
+                result = check_result(order_id)
+
+                if result == 1:
+                    print("🏆 WIN")
+                else:
+                    print("❌ LOSS")
+
+                # =========================
+                # 🧠 IA APRENDE
+                # =========================
+                update_result(result, pattern)
+
+                trade_open = False
+
+            else:
+                print("❌ Error al abrir operación")
 
         time.sleep(1)
 
     except Exception as e:
-        print("Error:", e)
-        time.sleep(1)
+        print("⚠️ ERROR:", e)
+        time.sleep(5)
