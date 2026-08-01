@@ -35,9 +35,9 @@ def analyze_candle(c):
 
     # Dominancia
     if c["close"] > c["open"]:
-        direction = "call"
-    else:
         direction = "put"
+    else:
+        direction = "call"
 
     return direction, strength
 
