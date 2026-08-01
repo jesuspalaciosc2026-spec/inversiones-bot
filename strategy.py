@@ -26,13 +26,19 @@ def load_memory():
             }
         }
 
-    with open(MEMORY_FILE, "r") as f:
-        return json.load(f)
+    try:
+        with open(MEMORY_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return load_memory()
 
 
 def save_memory(mem):
-    with open(MEMORY_FILE, "w") as f:
-        json.dump(mem, f)
+    try:
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(mem, f)
+    except:
+        pass
 
 
 # =========================================================
@@ -120,14 +126,12 @@ def detect_pattern(direction, df_m1, ticks):
     last = df_m1.iloc[-1]
     prev = df_m1.iloc[-2]
 
-    # tendencia limpia
     if direction == "call" and last["close"] > prev["close"]:
         return "trend_call"
 
     if direction == "put" and last["close"] < prev["close"]:
         return "trend_put"
 
-    # si no es tendencia → es trampa
     return "trap_call" if direction == "call" else "trap_put"
 
 
@@ -141,18 +145,18 @@ def build_score(direction, ticks, pattern, mem):
 
     score = 0
 
-    # dominancia
+    # dominancia micro
     if direction == "call" and up > down:
         score += 30
 
     if direction == "put" and down > up:
         score += 30
 
-    # rechazos institucionales
+    # rechazos (mechas)
     if rejections >= 3:
         score += 20
 
-    # tendencia interna
+    # movimiento interno
     move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
 
     if direction == "call" and move > 0:
@@ -161,7 +165,7 @@ def build_score(direction, ticks, pattern, mem):
     if direction == "put" and move < 0:
         score += 20
 
-    # 🔥 IA: multiplicador por confianza
+    # 🧠 IA: multiplicador de confianza
     confidence = mem["confidence"].get(pattern, 1.0)
     score *= confidence
 
@@ -169,7 +173,7 @@ def build_score(direction, ticks, pattern, mem):
 
 
 # =========================================================
-# 🚀 PRO SIGNAL FINAL
+# 🚀 PRO SIGNAL
 # =========================================================
 
 def pro_signal(df_m1, df_5s):
@@ -182,9 +186,7 @@ def pro_signal(df_m1, df_5s):
     if len(df_m1) < 20 or len(df_5s) < 20:
         return None, None, None
 
-    # =============================
     # CONTEXTO
-    # =============================
     direction = get_context(df_m1)
 
     if direction is None:
@@ -192,36 +194,27 @@ def pro_signal(df_m1, df_5s):
 
     ticks = get_ticks(df_5s)
 
-    # =============================
     # MANIPULACIÓN
-    # =============================
     trap = detect_trap(ticks)
     if trap:
         direction = trap
 
-    # =============================
     # PATRÓN
-    # =============================
     pattern = detect_pattern(direction, df_m1, ticks)
 
-    # =============================
-    # SCORE IA
-    # =============================
+    # SCORE
     score = build_score(direction, ticks, pattern, mem)
 
-    # 🔥 umbral dinámico base
     if score < 50:
         return None, None, None
 
-    # =============================
     # FILTROS PRO
-    # =============================
     last = df_m1.iloc[-1]
 
     body = abs(last["close"] - last["open"])
     avg = (df_m1["high"] - df_m1["low"]).tail(10).mean()
 
-    # evitar velas explosivas (FOMO)
+    # evitar FOMO
     if body > avg * 1.7:
         return None, None, None
 
@@ -240,27 +233,25 @@ def pro_signal(df_m1, df_5s):
 
 
 # =========================================================
-# 🧠 ACTUALIZAR IA (CLAVE)
+# 🧠 ACTUALIZAR IA
 # =========================================================
 
 def update_ai(result, pattern):
 
     mem = load_memory()
 
+    if pattern not in mem["confidence"]:
+        return
+
     if result == 1:
         mem["wins"] += 1
         mem["patterns"][pattern] += 1
-
-        # refuerzo fuerte
-        mem["confidence"][pattern] *= 1.05
-
+        mem["confidence"][pattern] *= 1.05  # refuerzo
     else:
         mem["losses"] += 1
+        mem["confidence"][pattern] *= 0.95  # castigo
 
-        # castigo controlado
-        mem["confidence"][pattern] *= 0.95
-
-    # límites de seguridad
+    # límites
     mem["confidence"][pattern] = max(0.5, min(2.0, mem["confidence"][pattern]))
 
     save_memory(mem)
