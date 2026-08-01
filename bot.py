@@ -6,7 +6,9 @@ import sys
 import logging
 
 from iqoptionapi.stable_api import IQ_Option
-from strategy import pro_signal
+from strategy import pro_signal, update_result
+
+# ================= CONFIG =================
 
 logging.getLogger().setLevel(logging.CRITICAL)
 sys.stderr = open(os.devnull, 'w')
@@ -16,12 +18,14 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-AMOUNT = 5580
+AMOUNT = 1578
 PAIR = "EURUSD-OTC"
 
 trade_open = False
 last_trade_time = 0
 current_expiration = 1
+
+last_trade_id = None
 
 # ================= TELEGRAM =================
 
@@ -36,13 +40,13 @@ def send(msg):
         pass
 
 
-# ================= IQ =================
+# ================= IQ OPTION =================
 
 iq = IQ_Option(EMAIL, PASSWORD)
 iq.connect()
 
 if not iq.check_connect():
-    print("❌ Error conexión")
+    print("❌ Error conexión IQ Option")
     exit()
 
 iq.change_balance("PRACTICE")
@@ -67,36 +71,71 @@ def get_candles(pair, tf, count=50):
 
 def trade(direction):
 
-    global trade_open, last_trade_time
+    global trade_open, last_trade_time, last_trade_id
 
-    status, _ = iq.buy(AMOUNT, PAIR, direction, 1)
+    status, trade_id = iq.buy(AMOUNT, PAIR, direction, current_expiration)
 
     if status:
         trade_open = True
         last_trade_time = time.time()
+        last_trade_id = trade_id
 
-        msg = f"🎯 {PAIR} {direction.upper()} (1m)"
+        msg = f"🎯 {PAIR} {direction.upper()} ({current_expiration}m)"
         print(msg)
         send(msg)
+    else:
+        print("❌ No se pudo abrir operación")
 
 
-# ================= LOOP =================
+# ================= RESULTADO =================
+
+def check_result():
+
+    global trade_open, last_trade_id
+
+    if not trade_open or last_trade_id is None:
+        return
+
+    try:
+        result = iq.check_win_v4(last_trade_id)
+
+        if result is None:
+            return
+
+        trade_open = False
+
+        if result > 0:
+            print("✅ WIN")
+            send("✅ WIN")
+            update_result(1)
+        else:
+            print("❌ LOSS")
+            send("❌ LOSS")
+            update_result(0)
+
+        last_trade_id = None
+
+    except:
+        pass
+
+
+# ================= LOOP PRINCIPAL =================
 
 while True:
     try:
 
+        # revisar resultado
+        check_result()
+
         # evitar múltiples operaciones
         if trade_open:
-            if time.time() - last_trade_time > 60:
-                trade_open = False
-            else:
-                time.sleep(0.5)
-                continue
+            time.sleep(0.5)
+            continue
 
         t = int(iq.get_server_timestamp())
 
-        # 🔥 SOLO SEGUNDO 58
-        if t % 60 < 58:
+        # 🔥 ENTRADA EXACTA SEGUNDO 59
+        if t % 60 < 59:
             time.sleep(0.2)
             continue
 
