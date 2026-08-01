@@ -16,13 +16,15 @@ def load_memory():
                 "trend_call": 0,
                 "trend_put": 0,
                 "trap_call": 0,
-                "trap_put": 0
+                "trap_put": 0,
+                "aggressive": 0
             },
             "confidence": {
                 "trend_call": 1.0,
                 "trend_put": 1.0,
                 "trap_call": 1.0,
-                "trap_put": 1.0
+                "trap_put": 1.0,
+                "aggressive": 1.0
             }
         }
 
@@ -40,7 +42,6 @@ def save_memory(mem):
 # =========================================================
 
 def get_context(df):
-
     highs = df["high"].tail(5).values
     lows = df["low"].tail(5).values
 
@@ -52,7 +53,6 @@ def get_context(df):
 
     if bullish:
         return "call"
-
     if bearish:
         return "put"
 
@@ -60,18 +60,11 @@ def get_context(df):
 
 
 # =========================================================
-# 📊 MICROESTRUCTURA (5s)
+# 📊 MICROESTRUCTURA
 # =========================================================
 
-def get_ticks(df_5s):
-    return df_5s.tail(12)
-
-
 def micro_analysis(ticks):
-
-    up = 0
-    down = 0
-    rejections = 0
+    up, down, rejections = 0, 0, 0
 
     for i in range(len(ticks)):
         o = ticks.iloc[i]["open"]
@@ -94,11 +87,10 @@ def micro_analysis(ticks):
 
 
 # =========================================================
-# 🧠 DETECTAR MANIPULACIÓN
+# 🧠 DETECTAR TRAMPA
 # =========================================================
 
 def detect_trap(ticks):
-
     last = ticks.iloc[-1]
     prev = ticks.iloc[-2]
 
@@ -112,11 +104,10 @@ def detect_trap(ticks):
 
 
 # =========================================================
-# 🧠 DETECTAR PATRÓN
+# 🧠 PATRÓN
 # =========================================================
 
 def detect_pattern(direction, df_m1):
-
     last = df_m1.iloc[-1]
     prev = df_m1.iloc[-2]
 
@@ -133,24 +124,21 @@ def detect_pattern(direction, df_m1):
 # 🎯 SCORE IA
 # =========================================================
 
-def build_score(direction, ticks, pattern, mem):
+def build_score(direction, ticks, pattern, mem, aggressive=False):
 
     up, down, rejections = micro_analysis(ticks)
 
     score = 0
 
-    # dominancia
-    if direction == "call" and up > down:
+    if direction == "call" and up >= down:
         score += 30
 
-    if direction == "put" and down > up:
+    if direction == "put" and down >= up:
         score += 30
 
-    # rechazo institucional
     if rejections >= 2:
         score += 20
 
-    # movimiento
     move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
 
     if direction == "call" and move > 0:
@@ -159,55 +147,54 @@ def build_score(direction, ticks, pattern, mem):
     if direction == "put" and move < 0:
         score += 20
 
-    # IA confianza
     confidence = mem["confidence"].get(pattern, 1.0)
     score *= confidence
+
+    if aggressive:
+        score *= 1.2
 
     return score
 
 
 # =========================================================
-# 🚀 PRO SIGNAL (MODO AGRESIVO)
+# 🚀 SEÑAL FINAL
 # =========================================================
 
-def pro_signal(df_m1, df_5s):
+def pro_signal(df_m1, df_5s, aggressive=True):
 
     mem = load_memory()
 
     if df_m1 is None or df_5s is None:
-        return None, None
+        return None, None, None
 
-    if len(df_m1) < 20 or len(df_5s) < 20:
-        return None, None
+    if len(df_m1) < 20 or len(df_5s) < 10:
+        return None, None, None
 
     direction = get_context(df_m1)
-    if direction is None:
-        return None, None
 
-    ticks = get_ticks(df_5s)
+    if direction is None and not aggressive:
+        return None, None, None
+
+    ticks = df_5s.tail(12)
 
     trap = detect_trap(ticks)
     if trap:
         direction = trap
 
+    if direction is None:
+        direction = "call" if ticks.iloc[-1]["close"] > ticks.iloc[0]["open"] else "put"
+
     pattern = detect_pattern(direction, df_m1)
 
-    score = build_score(direction, ticks, pattern, mem)
+    score = build_score(direction, ticks, pattern, mem, aggressive)
 
-    # 🔥 MODO AGRESIVO
-    if score < 30:
-        return None, None
+    # 🔥 modo agresivo entra más
+    threshold = 35 if aggressive else 50
 
-    last = df_m1.iloc[-1]
+    if score < threshold:
+        return None, None, None
 
-    body = abs(last["close"] - last["open"])
-    avg = (df_m1["high"] - df_m1["low"]).tail(10).mean()
-
-    # filtro suave
-    if body > avg * 2.5:
-        return None, None
-
-    return direction, pattern
+    return direction, 1, pattern
 
 
 # =========================================================
@@ -231,9 +218,6 @@ def update_ai(result, pattern):
     save_memory(mem)
 
 
-# =========================================================
-# 🔥 FIX ERROR IMPORT
-# =========================================================
-
+# 🔥 IMPORTANTE (ARREGLA TU ERROR)
 def update_result(result, pattern):
     update_ai(result, pattern)
