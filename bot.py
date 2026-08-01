@@ -8,7 +8,7 @@ from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal
 
 # =============================
-# LOGS
+# LOGS EN RAILWAY
 # =============================
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -28,12 +28,15 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # 🔥 SOLO OTC
 PAIRS = ["EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC"]
 
-AMOUNT = 35
+AMOUNT = 200
 EXPIRATION = 1
 
 # 🔥 LIMITE
 max_trades = 9
 trade_count = 0
+
+# 🔥 INVERTIR SEÑALES
+INVERT_SIGNALS = True
 
 # =============================
 # TELEGRAM
@@ -177,7 +180,7 @@ def trade(pair, direction):
         log(f"❌ Error trade: {e}")
 
 # =============================
-# LOOP
+# LOOP PRINCIPAL
 # =============================
 log("🔥 BOT INICIADO")
 
@@ -212,6 +215,13 @@ while True:
             if direction is None:
                 log(f"{pair} 🚫 sin señal")
                 continue
+
+            # 🔥 INVERTIR SEÑALES
+            if INVERT_SIGNALS:
+                if direction == "call":
+                    direction = "put"
+                elif direction == "put":
+                    direction = "call"
 
             log(f"{pair} 📊 {direction} | score {score}")
 
