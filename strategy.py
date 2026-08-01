@@ -40,6 +40,7 @@ def save_memory(mem):
 # =========================================================
 
 def get_context(df):
+
     highs = df["high"].tail(5).values
     lows = df["low"].tail(5).values
 
@@ -67,7 +68,10 @@ def get_ticks(df_5s):
 
 
 def micro_analysis(ticks):
-    up, down, rejections = 0, 0, 0
+
+    up = 0
+    down = 0
+    rejections = 0
 
     for i in range(len(ticks)):
         o = ticks.iloc[i]["open"]
@@ -94,6 +98,7 @@ def micro_analysis(ticks):
 # =========================================================
 
 def detect_trap(ticks):
+
     last = ticks.iloc[-1]
     prev = ticks.iloc[-2]
 
@@ -111,6 +116,7 @@ def detect_trap(ticks):
 # =========================================================
 
 def detect_pattern(direction, df_m1):
+
     last = df_m1.iloc[-1]
     prev = df_m1.iloc[-2]
 
@@ -124,11 +130,13 @@ def detect_pattern(direction, df_m1):
 
 
 # =========================================================
-# 🎯 SCORE IA
+# 🎯 SCORE CON IA
 # =========================================================
 
 def build_score(direction, ticks, pattern, mem):
+
     up, down, rejections = micro_analysis(ticks)
+
     score = 0
 
     if direction == "call" and up > down:
@@ -155,7 +163,7 @@ def build_score(direction, ticks, pattern, mem):
 
 
 # =========================================================
-# 🚀 PRO SIGNAL
+# 🚀 PRO SIGNAL FINAL
 # =========================================================
 
 def pro_signal(df_m1, df_5s):
@@ -169,6 +177,7 @@ def pro_signal(df_m1, df_5s):
         return None, None, None
 
     direction = get_context(df_m1)
+
     if direction is None:
         return None, None, None
 
@@ -214,6 +223,9 @@ def update_ai(result, pattern):
 
     mem = load_memory()
 
+    if pattern is None:
+        return
+
     if result == 1:
         mem["wins"] += 1
         mem["patterns"][pattern] += 1
@@ -225,3 +237,11 @@ def update_ai(result, pattern):
     mem["confidence"][pattern] = max(0.5, min(2.0, mem["confidence"][pattern]))
 
     save_memory(mem)
+
+
+# =========================================================
+# 🔁 COMPATIBILIDAD CON BOT
+# =========================================================
+
+def update_result(result, pattern):
+    update_ai(result, pattern)
