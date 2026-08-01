@@ -4,7 +4,7 @@ import numpy as np
 # 🧠 MEMORIA ADAPTATIVA
 # =========================================================
 
-trade_history = []  # 1 = win, 0 = loss
+trade_history = []
 
 
 def update_result(result):
@@ -28,12 +28,11 @@ def dynamic_threshold():
     winrate = get_winrate()
 
     if winrate < 0.4:
-        return 75  # más exigente
-
+        return 75
     elif winrate > 0.65:
-        return 60  # más agresivo
+        return 60
 
-    return 65  # normal
+    return 65
 
 
 def market_blocked():
@@ -41,7 +40,6 @@ def market_blocked():
     if len(trade_history) < 5:
         return False
 
-    # bloqueo por mala racha
     if trade_history[-3:] == [0, 0, 0]:
         return True
 
@@ -49,7 +47,7 @@ def market_blocked():
 
 
 # =========================================================
-# 📊 MICROESTRUCTURA (VELA COMPLETA)
+# 📊 MICROESTRUCTURA
 # =========================================================
 
 def get_ticks(df_5s):
@@ -58,21 +56,7 @@ def get_ticks(df_5s):
 
 def efficiency(ticks):
 
-    total_move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
-
-    path = 0
-    for i in range(1, len(ticks)):
-        path += abs(ticks.iloc[i]["close"] - ticks.iloc[i-1]["close"])
-
-    if path == 0:
-        return 0
-
-    return abs(total_move) / path
-
-
-def effort_vs_result(ticks):
-
-    total_move = abs(ticks.iloc[-1]["close"] - ticks.iloc[0]["open"])
+    move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
 
     path = sum(abs(ticks.iloc[i]["close"] - ticks.iloc[i-1]["close"])
                for i in range(1, len(ticks)))
@@ -80,46 +64,15 @@ def effort_vs_result(ticks):
     if path == 0:
         return 0
 
-    return total_move / path
+    return abs(move) / path
 
 
 def pressure(ticks):
 
-    up = 0
-    down = 0
-
-    for i in range(len(ticks)):
-        if ticks.iloc[i]["close"] > ticks.iloc[i]["open"]:
-            up += 1
-        else:
-            down += 1
+    up = sum(1 for i in range(len(ticks)) if ticks.iloc[i]["close"] > ticks.iloc[i]["open"])
+    down = len(ticks) - up
 
     return up, down
-
-
-def micro_pullbacks(ticks):
-
-    changes = []
-
-    for i in range(1, len(ticks)):
-        diff = ticks.iloc[i]["close"] - ticks.iloc[i-1]["close"]
-        changes.append(diff)
-
-    reversals = 0
-
-    for i in range(1, len(changes)):
-        if changes[i] * changes[i-1] < 0:
-            reversals += 1
-
-    return reversals
-
-
-def time_in_zone(ticks):
-
-    prices = ticks["close"].round(5)
-    _, counts = np.unique(prices, return_counts=True)
-
-    return counts.max()
 
 
 def close_position(ticks):
@@ -132,36 +85,6 @@ def close_position(ticks):
         return 0.5
 
     return (close - low) / (high - low)
-
-
-def result_strength(ticks):
-
-    open_p = ticks.iloc[0]["open"]
-    close_p = ticks.iloc[-1]["close"]
-
-    high = ticks["high"].max()
-    low = ticks["low"].min()
-
-    total = high - low
-
-    if total == 0:
-        return 0
-
-    return abs(close_p - open_p) / total
-
-
-def phase_analysis(ticks):
-
-    p1 = ticks.iloc[0:3]
-    p4 = ticks.iloc[9:12]
-
-    m1 = p1["close"].iloc[-1] - p1["open"].iloc[0]
-    m4 = p4["close"].iloc[-1] - p4["open"].iloc[0]
-
-    s1 = np.mean(np.abs(np.diff(p1["close"])))
-    s4 = np.mean(np.abs(np.diff(p4["close"])))
-
-    return m1, m4, s1, s4
 
 
 def manipulation(ticks):
@@ -178,97 +101,44 @@ def manipulation(ticks):
     return False
 
 
-def short_context(df_5s):
-
-    if len(df_5s) < 36:
-        return 0
-
-    last = df_5s.tail(36)
-    closes = last["close"].values
-
-    return closes[-1] - closes[0]
-
-
 # =========================================================
-# 🎯 SCORE INTELIGENTE
+# 🎯 SCORE
 # =========================================================
 
-def score_candle(ticks, df_5s):
+def score_candle(ticks):
 
     eff = efficiency(ticks)
-    evr = effort_vs_result(ticks)
-    zone = time_in_zone(ticks)
-    pullbacks = micro_pullbacks(ticks)
-    up, down = pressure(ticks)
-    strength = result_strength(ticks)
-    m1, m4, s1, s4 = phase_analysis(ticks)
     cp = close_position(ticks)
-    context = short_context(df_5s)
-
-    total_move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
+    up, down = pressure(ticks)
 
     score = 0
     direction = None
 
-    # eficiencia
     if eff > 0.6:
-        score += 10
+        score += 20
 
-    # esfuerzo vs resultado
-    if evr > 0.6:
-        score += 10
-    elif evr < 0.4:
-        score -= 10
-
-    # fuerza
-    if strength > 0.5:
-        score += 10
-
-    # poco ruido
-    if pullbacks <= 3:
-        score += 10
-
-    # evitar lateralidad
-    if zone < 4:
-        score += 10
-
-    # aceleración final
-    if s4 > s1:
-        score += 10
-
-    # cierre dominante
     if cp > 0.7:
-        score += 15
+        score += 25
         direction = "call"
 
     elif cp < 0.3:
-        score += 15
+        score += 25
         direction = "put"
 
-    # presión
-    if total_move > 0 and up > down:
-        score += 5
+    if up > down:
+        score += 10
+    else:
+        score += 10
 
-    if total_move < 0 and down > up:
-        score += 5
-
-    # contexto
-    if context > 0 and direction == "call":
-        score += 5
-
-    if context < 0 and direction == "put":
-        score += 5
-
-    return score, direction, total_move, m1, m4
+    return score, direction
 
 
 # =========================================================
-# 🚀 PRO SIGNAL FINAL
+# 🚀 PRO SIGNAL
 # =========================================================
 
 def pro_signal(df_m1, df_5s):
 
-    # bloqueo adaptativo
     if market_blocked():
         return None, None
 
@@ -277,32 +147,66 @@ def pro_signal(df_m1, df_5s):
 
     ticks = get_ticks(df_5s)
 
-    # evitar trampas
     if manipulation(ticks):
         return None, None
 
-    score, direction, move, m1, m4 = score_candle(ticks, df_5s)
+    score, direction = score_candle(ticks)
 
     threshold = dynamic_threshold()
 
-    # filtro final
     if score < threshold or direction is None:
         return None, None
 
-    # ================= CONTINUACIÓN =================
+    # =====================================================
+    # 🔥 FILTROS PROFESIONALES
+    # =====================================================
 
-    if direction == "call" and move > 0 and m4 > m1:
-        return "call", 1
+    last = df_m1.iloc[-1]
 
-    if direction == "put" and move < 0 and m4 < m1:
-        return "put", 1
+    # ---- 1. EVITAR VELA GRANDE (FOMO)
+    candle_size = abs(last["close"] - last["open"])
+    avg_size = (df_m1["high"] - df_m1["low"]).tail(10).mean()
 
-    # ================= ABSORCIÓN =================
+    if candle_size > avg_size * 1.7:
+        return None, None
 
-    if move < 0 and direction == "call":
-        return "call", 1
+    # ---- 2. EVITAR RECHAZO FUERTE (AGOTAMIENTO)
+    upper_wick = last["high"] - max(last["close"], last["open"])
+    lower_wick = min(last["close"], last["open"]) - last["low"]
+    body = abs(last["close"] - last["open"])
 
-    if move > 0 and direction == "put":
-        return "put", 1
+    if direction == "call" and upper_wick > body * 1.5:
+        return None, None
 
-    return None, None
+    if direction == "put" and lower_wick > body * 1.5:
+        return None, None
+
+    # ---- 3. EVITAR MÁXIMOS / MÍNIMOS
+    last_price = last["close"]
+    recent_high = df_m1["high"].tail(10).max()
+    recent_low = df_m1["low"].tail(10).min()
+
+    if direction == "call" and abs(last_price - recent_high) < 0.00015:
+        return None, None
+
+    if direction == "put" and abs(last_price - recent_low) < 0.00015:
+        return None, None
+
+    # ---- 4. EXIGIR PULLBACK
+    last3 = df_m1.tail(3)
+
+    if direction == "call":
+        pullback = last3.iloc[-2]["close"] < last3.iloc[-3]["close"]
+        if not pullback:
+            return None, None
+
+    if direction == "put":
+        pullback = last3.iloc[-2]["close"] > last3.iloc[-3]["close"]
+        if not pullback:
+            return None, None
+
+    # =====================================================
+    # 🎯 ENTRADA FINAL
+    # =====================================================
+
+    return direction, 1
