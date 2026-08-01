@@ -1,9 +1,20 @@
 import time
 import os
+import sys
 import requests
 import pandas as pd
+import datetime
 from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal
+
+# =============================
+# 🔥 FORZAR LOGS EN RAILWAY
+# =============================
+sys.stdout.reconfigure(line_buffering=True)
+
+def log(msg):
+    now = datetime.datetime.now().strftime("%H:%M:%S")
+    print(f"[{now}] {msg}", flush=True)
 
 # =============================
 # CONFIG
@@ -14,10 +25,10 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-PAIRS = ["EURUSD", "GBPUSD", "EURJPY", "EURGBP"]
+PAIRS = ["EURUSD", "GBPUSD", "USDCHF", "EURJPY", "EURGBP"]
 
-AMOUNT = 200
-EXPIRATION = 1  # 1 minuto
+AMOUNT = 20
+EXPIRATION = 1  # minutos
 
 # =============================
 # TELEGRAM
@@ -28,37 +39,50 @@ def send_telegram(msg):
         requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": msg
-        })
+        }, timeout=5)
     except:
         pass
 
 # =============================
-# CONEXIÓN
+# CONEXIÓN IQ
 # =============================
 Iq = IQ_Option(EMAIL, PASSWORD)
-Iq.connect()
 
-if not Iq.check_connect():
-    print("❌ Error conectando")
-    exit()
+def connect():
+    global Iq
 
-print("✅ Conectado a IQ Option")
-send_telegram("🤖 Bot conectado")
+    log("🔌 Conectando a IQ Option...")
+    Iq.connect()
+
+    if Iq.check_connect():
+        log("✅ Conectado a IQ Option")
+        send_telegram("🤖 Bot conectado a IQ Option")
+        return True
+    else:
+        log("❌ Error de conexión")
+        return False
+
+connect()
 
 # =============================
-# FUNCIONES
+# DATA
 # =============================
-def get_candles(pair, timeframe, count):
-    candles = Iq.get_candles(pair, timeframe, count, time.time())
-    df = pd.DataFrame(candles)
+def get_candles(pair, timeframe, count=60):
+    try:
+        data = Iq.get_candles(pair, timeframe, count, time.time())
+        df = pd.DataFrame(data)
 
-    # NORMALIZAR columnas
-    if "max" in df.columns:
-        df["high"] = df["max"]
-    if "min" in df.columns:
-        df["low"] = df["min"]
+        # NORMALIZAR columnas
+        if "max" in df.columns:
+            df["high"] = df["max"]
+        if "min" in df.columns:
+            df["low"] = df["min"]
 
-    return df
+        return df
+
+    except Exception as e:
+        log(f"❌ Error obteniendo velas: {e}")
+        return None
 
 # =============================
 # CONTROL DE VELA
@@ -68,60 +92,109 @@ last_candle_time = {}
 def is_new_candle(df, pair):
     global last_candle_time
 
-    current_time = df.iloc[-1]["from"]
+    try:
+        current_time = df.iloc[-1]["from"]
 
-    if pair not in last_candle_time:
-        last_candle_time[pair] = current_time
+        if pair not in last_candle_time:
+            last_candle_time[pair] = current_time
+            return False
+
+        if current_time != last_candle_time[pair]:
+            last_candle_time[pair] = current_time
+            log(f"🕯 Nueva vela detectada en {pair}")
+            return True
+
         return False
 
-    if current_time != last_candle_time[pair]:
-        last_candle_time[pair] = current_time
-        return True
+    except:
+        return False
 
-    return False
+# =============================
+# TRADE
+# =============================
+def execute_trade(pair, direction):
+
+    try:
+        log(f"🚀 Ejecutando {direction.upper()} en {pair}")
+
+        check, trade_id = Iq.buy(AMOUNT, pair, direction, EXPIRATION)
+
+        if check:
+            log("✅ Operación abierta")
+            send_telegram(f"✅ {pair} {direction.upper()}")
+
+            time.sleep(EXPIRATION * 60)
+
+            result = Iq.check_win_v4(trade_id)
+
+            if result > 0:
+                log(f"💰 WIN +{result}")
+                send_telegram(f"💰 WIN {pair} +{result}")
+            else:
+                log(f"❌ LOSS {result}")
+                send_telegram(f"❌ LOSS {pair} {result}")
+
+        else:
+            log("❌ No se pudo abrir operación")
+
+    except Exception as e:
+        log(f"❌ Error en trade: {e}")
 
 # =============================
 # LOOP PRINCIPAL
 # =============================
+log("🔥 BOT INICIADO")
+
 while True:
     try:
+        log("🔄 Bot activo...")
+
+        # reconectar si se cae
+        if not Iq.check_connect():
+            log("⚠️ Reconectando...")
+            connect()
+            time.sleep(5)
+            continue
+
         for pair in PAIRS:
 
-            df_m1 = get_candles(pair, 60, 50)
-            df_m5 = get_candles(pair, 300, 50)
+            log(f"⏳ Analizando {pair}")
 
-            # Solo operar en vela nueva
+            df_m1 = get_candles(pair, 60, 60)
+            df_m5 = get_candles(pair, 300, 60)
+
+            if df_m1 is None or df_m5 is None:
+                continue
+
+            # SOLO UNA VEZ POR VELA
             if not is_new_candle(df_m1, pair):
                 continue
 
-            # Obtener señal
-            result = pro_signal(df_m1, df_m5)
+            # =============================
+            # SEÑAL
+            # =============================
+            direction, score, pattern = pro_signal(df_m1, df_m5)
 
-            if result is None:
+            if direction is None:
+                log("🚫 Sin señal")
                 continue
 
-            direction, score, pattern = result
+            log(f"📊 Señal → {direction.upper()} | Score: {score} | {pattern}")
 
-            print(f"🔥 {pair} | {direction} | score={score} | {pattern}")
-
-            if score < 15:
+            # filtro mínimo
+            if score < 20:
+                log("⚠️ Score bajo, ignorado")
                 continue
 
-            send_telegram(f"📊 {pair}\n📈 {direction.upper()}\n🔥 Score: {score}\n🎯 {pattern}")
+            send_telegram(f"📊 {pair}\n{direction.upper()} | Score {score}")
 
-            # Ejecutar operación
-            check, id = Iq.buy(AMOUNT, pair, direction, EXPIRATION)
-
-            if check:
-                print("✅ Operación abierta")
-                send_telegram(f"✅ Operación abierta {pair} {direction.upper()}")
-            else:
-                print("❌ Error al abrir operación")
-                send_telegram(f"❌ Error al abrir operación {pair}")
+            # =============================
+            # EJECUCIÓN
+            # =============================
+            execute_trade(pair, direction)
 
         time.sleep(1)
 
     except Exception as e:
-        print(f"❌ ERROR GENERAL: {e}")
-        send_telegram(f"❌ ERROR: {e}")
+        log(f"❌ ERROR GENERAL: {e}")
         time.sleep(5)
