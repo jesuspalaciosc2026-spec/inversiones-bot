@@ -1,22 +1,42 @@
 import time
 import os
+import requests
+import pandas as pd
 from iqoptionapi.stable_api import IQ_Option
-from strategy import pro_signal, update_ai
+from strategy import pro_signal, update_result
 
 # =========================================================
-# 🔐 CONFIG
+# 🔐 VARIABLES DE ENTORNO
 # =========================================================
 
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 
-AMOUNT = 200
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+PAIR = "EURUSD"
+AMOUNT = 2
 EXPIRATION = 1  # 1 minuto
 
-PAIRS = ["EURUSD", "GBPUSD", "EURJPY", "USDCHF", "EURGBP"]
 
 # =========================================================
-# 🚀 CONEXIÓN
+# 📩 TELEGRAM
+# =========================================================
+
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message
+        })
+    except Exception as e:
+        print("Error Telegram:", e)
+
+
+# =========================================================
+# 🔌 CONEXIÓN IQ OPTION
 # =========================================================
 
 Iq = IQ_Option(EMAIL, PASSWORD)
@@ -27,102 +47,81 @@ if not Iq.check_connect():
     exit()
 
 print("✅ Conectado a IQ Option")
+send_telegram("🤖 Bot iniciado correctamente")
+
 
 # =========================================================
-# 🔄 VARIABLES CONTROL
-# =========================================================
-
-trade_open = False
-last_trade_time = 0
-TRADE_COOLDOWN = 60  # segundos (evita spam)
-
-# =========================================================
-# 📊 OBTENER DATOS
-# =========================================================
-
-def get_candles(pair, timeframe, count):
-    candles = Iq.get_candles(pair, timeframe, count, time.time())
-    import pandas as pd
-    df = pd.DataFrame(candles)
-    df.rename(columns={
-        "max": "high",
-        "min": "low"
-    }, inplace=True)
-    return df
-
-# =========================================================
-# 🎯 LOOP PRINCIPAL
+# 🔄 LOOP PRINCIPAL
 # =========================================================
 
 while True:
     try:
-        # evitar operar muy seguido
-        if time.time() - last_trade_time < TRADE_COOLDOWN:
-            time.sleep(1)
+        # =============================
+        # OBTENER DATOS
+        # =============================
+        candles_m1 = Iq.get_candles(PAIR, 60, 50, time.time())
+        candles_5s = Iq.get_candles(PAIR, 5, 50, time.time())
+
+        if candles_m1 is None or candles_5s is None:
+            print("⚠️ Datos no disponibles")
+            time.sleep(5)
             continue
 
-        # evitar múltiples operaciones abiertas
-        if trade_open:
-            time.sleep(1)
-            continue
+        df_m1 = pd.DataFrame(candles_m1)
+        df_5s = pd.DataFrame(candles_5s)
 
-        for pair in PAIRS:
+        # =============================
+        # GENERAR SEÑAL
+        # =============================
+        signal, expiration, pattern = pro_signal(df_m1, df_5s, aggressive=True)
 
-            # =============================
-            # VALIDAR SI ESTÁ ABIERTO
-            # =============================
-            open_assets = Iq.get_all_open_time()
-
-            if not open_assets["binary"][pair]["open"]:
-                print(f"⛔ {pair} cerrado")
-                continue
+        if signal:
+            msg = f"🔥 SEÑAL {PAIR} → {signal.upper()} | patrón: {pattern}"
+            print(msg)
+            send_telegram(msg)
 
             # =============================
-            # DATOS
+            # EJECUTAR OPERACIÓN
             # =============================
-            df_m1 = get_candles(pair, 60, 50)
-            df_5s = get_candles(pair, 5, 50)
+            check, trade_id = Iq.buy(AMOUNT, PAIR, signal, EXPIRATION)
 
-            # =============================
-            # SEÑAL
-            # =============================
-            direction, exp, pattern = pro_signal(df_m1, df_5s)
+            if check:
+                print("✅ Operación abierta")
+                send_telegram("✅ Operación ejecutada")
 
-            if direction is None:
-                continue
+                # Esperar resultado
+                time.sleep(EXPIRATION * 60)
 
-            print(f"🔥 SEÑAL {pair} → {direction.upper()} | patrón: {pattern}")
+                result = Iq.check_win_v4(trade_id)
 
-            # =============================
-            # EJECUCIÓN REAL
-            # =============================
-            status, trade_id = Iq.buy(AMOUNT, pair, direction, EXPIRATION)
-
-            if status:
-                print(f"✅ OPERACIÓN ABIERTA → {pair} {direction}")
-                trade_open = True
-                last_trade_time = time.time()
+                if result is None:
+                    print("⚠️ Resultado no disponible")
+                    send_telegram("⚠️ Resultado no disponible")
+                    continue
 
                 # =============================
                 # RESULTADO
                 # =============================
-                result = Iq.check_win_v4(trade_id)
-
                 if result > 0:
                     print("💰 WIN")
-                    update_ai(1, pattern)
+                    send_telegram("💰 WIN")
+                    update_result(1, pattern)
+
                 else:
                     print("❌ LOSS")
-                    update_ai(0, pattern)
-
-                trade_open = False
+                    send_telegram("❌ LOSS")
+                    update_result(0, pattern)
 
             else:
-                print(f"❌ ERROR al abrir operación en {pair}")
-                time.sleep(2)  # evita spam
+                print("❌ Error al abrir operación")
+                send_telegram("❌ Error al abrir operación")
 
-        time.sleep(1)
+        # =============================
+        # ESPERA ENTRE CICLOS
+        # =============================
+        time.sleep(5)
 
     except Exception as e:
-        print("⚠️ ERROR GENERAL:", e)
-        time.sleep(5)
+        print("❌ ERROR GENERAL:", e)
+        send_telegram(f"❌ ERROR: {e}")
+        time.sleep(10)
