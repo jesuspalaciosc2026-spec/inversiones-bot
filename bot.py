@@ -8,7 +8,7 @@ from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal
 
 # =============================
-# 🔥 FORZAR LOGS EN RAILWAY
+# LOGS
 # =============================
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -22,176 +22,203 @@ def log(msg):
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-PAIRS = ["EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURJPY-OTC", "EURGBP-OTC"]
+# 🔥 SOLO OTC
+PAIRS = ["EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC"]
 
-AMOUNT = 20
-EXPIRATION = 1  # minutos
+AMOUNT = 35
+EXPIRATION = 1
+
+# 🔥 LIMITE
+max_trades = 9
+trade_count = 0
 
 # =============================
 # TELEGRAM
 # =============================
-def send_telegram(msg):
+def send(msg):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": msg
-        }, timeout=5)
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": msg},
+            timeout=5
+        )
     except:
         pass
 
 # =============================
-# CONEXIÓN IQ
+# CONTROL BOT
+# =============================
+bot_active = True
+last_update_id = None
+
+def check_commands():
+    global bot_active, last_update_id
+
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+        params = {"offset": last_update_id + 1} if last_update_id else {}
+
+        r = requests.get(url, params=params, timeout=5)
+        data = r.json()
+
+        for update in data.get("result", []):
+            last_update_id = update["update_id"]
+
+            msg = update.get("message", {}).get("text", "")
+
+            if "/stop" in msg.lower():
+                bot_active = False
+                log("🛑 BOT DETENIDO")
+                send("🛑 BOT DETENIDO")
+
+            elif "/start" in msg.lower():
+                bot_active = True
+                log("🚀 BOT ACTIVADO")
+                send("🚀 BOT ACTIVADO")
+
+    except Exception as e:
+        log(f"Error Telegram: {e}")
+
+# =============================
+# IQ OPTION
 # =============================
 Iq = IQ_Option(EMAIL, PASSWORD)
 
 def connect():
-    global Iq
-
-    log("🔌 Conectando a IQ Option...")
+    log("🔌 Conectando...")
     Iq.connect()
 
     if Iq.check_connect():
-        log("✅ Conectado a IQ Option")
-        send_telegram("🤖 Bot conectado a IQ Option")
-        return True
+        log("✅ Conectado")
+        send("🤖 Bot conectado")
     else:
-        log("❌ Error de conexión")
-        return False
+        log("❌ Error conexión")
 
 connect()
 
 # =============================
 # DATA
 # =============================
-def get_candles(pair, timeframe, count=60):
+def get_candles(pair, tf, count=60):
     try:
-        data = Iq.get_candles(pair, timeframe, count, time.time())
+        data = Iq.get_candles(pair, tf, count, time.time())
         df = pd.DataFrame(data)
 
-        # NORMALIZAR columnas
         if "max" in df.columns:
             df["high"] = df["max"]
         if "min" in df.columns:
             df["low"] = df["min"]
 
         return df
-
-    except Exception as e:
-        log(f"❌ Error obteniendo velas: {e}")
+    except:
         return None
 
 # =============================
-# CONTROL DE VELA
+# CONTROL VELA
 # =============================
 last_candle_time = {}
 
 def is_new_candle(df, pair):
     global last_candle_time
 
-    try:
-        current_time = df.iloc[-1]["from"]
+    t = df.iloc[-1]["from"]
 
-        if pair not in last_candle_time:
-            last_candle_time[pair] = current_time
-            return False
-
-        if current_time != last_candle_time[pair]:
-            last_candle_time[pair] = current_time
-            log(f"🕯 Nueva vela detectada en {pair}")
-            return True
-
+    if pair not in last_candle_time:
+        last_candle_time[pair] = t
         return False
 
-    except:
-        return False
+    if t != last_candle_time[pair]:
+        last_candle_time[pair] = t
+        log(f"🕯 Nueva vela {pair}")
+        return True
+
+    return False
 
 # =============================
 # TRADE
 # =============================
-def execute_trade(pair, direction):
+def trade(pair, direction):
+    global trade_count, bot_active
 
     try:
-        log(f"🚀 Ejecutando {direction.upper()} en {pair}")
+        if trade_count >= max_trades:
+            bot_active = False
+            log("🛑 LIMITE DE OPERACIONES ALCANZADO")
+            send("🛑 Se alcanzaron 9 operaciones")
+            return
 
-        check, trade_id = Iq.buy(AMOUNT, pair, direction, EXPIRATION)
+        log(f"🚀 {pair} {direction.upper()}")
 
-        if check:
-            log("✅ Operación abierta")
-            send_telegram(f"✅ {pair} {direction.upper()}")
+        status, trade_id = Iq.buy(AMOUNT, pair, direction, EXPIRATION)
+
+        if status:
+            trade_count += 1
+
+            send(f"🎯 {pair} {direction.upper()} ({trade_count}/9)")
 
             time.sleep(EXPIRATION * 60)
 
             result = Iq.check_win_v4(trade_id)
 
             if result > 0:
-                log(f"💰 WIN +{result}")
-                send_telegram(f"💰 WIN {pair} +{result}")
+                log(f"💰 WIN {result}")
+                send(f"💰 WIN {pair}")
             else:
                 log(f"❌ LOSS {result}")
-                send_telegram(f"❌ LOSS {pair} {result}")
+                send(f"❌ LOSS {pair}")
 
         else:
-            log("❌ No se pudo abrir operación")
+            log("❌ Error al abrir trade")
 
     except Exception as e:
-        log(f"❌ Error en trade: {e}")
+        log(f"❌ Error trade: {e}")
 
 # =============================
-# LOOP PRINCIPAL
+# LOOP
 # =============================
 log("🔥 BOT INICIADO")
 
 while True:
     try:
-        log("🔄 Bot activo...")
+        check_commands()
 
-        # reconectar si se cae
         if not Iq.check_connect():
             log("⚠️ Reconectando...")
             connect()
             time.sleep(5)
             continue
 
+        if not bot_active:
+            log("⏸ Bot en pausa...")
+            time.sleep(2)
+            continue
+
         for pair in PAIRS:
 
-            log(f"⏳ Analizando {pair}")
-
-            df_m1 = get_candles(pair, 60, 60)
-            df_m5 = get_candles(pair, 300, 60)
+            df_m1 = get_candles(pair, 60)
+            df_m5 = get_candles(pair, 300)
 
             if df_m1 is None or df_m5 is None:
                 continue
 
-            # SOLO UNA VEZ POR VELA
             if not is_new_candle(df_m1, pair):
                 continue
 
-            # =============================
-            # SEÑAL
-            # =============================
             direction, score, pattern = pro_signal(df_m1, df_m5)
 
             if direction is None:
-                log("🚫 Sin señal")
+                log(f"{pair} 🚫 sin señal")
                 continue
 
-            log(f"📊 Señal → {direction.upper()} | Score: {score} | {pattern}")
+            log(f"{pair} 📊 {direction} | score {score}")
 
-            # filtro mínimo
             if score < 20:
-                log("⚠️ Score bajo, ignorado")
                 continue
 
-            send_telegram(f"📊 {pair}\n{direction.upper()} | Score {score}")
-
-            # =============================
-            # EJECUCIÓN
-            # =============================
-            execute_trade(pair, direction)
+            trade(pair, direction)
 
         time.sleep(1)
 
