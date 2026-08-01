@@ -1,153 +1,128 @@
 import time
 import os
-import logging
 from iqoptionapi.stable_api import IQ_Option
-
-from strategy import pro_signal, update_result
+from strategy import pro_signal, update_ai
 
 # =========================================================
-# ⚙️ CONFIG
+# 🔐 CONFIG
 # =========================================================
 
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 
-PAIRS = ["EURUSD", "GBPUSD", "EURJPY", "EURGBP", "USDCHF"]
-AMOUNT = 20000
+AMOUNT = 200
 EXPIRATION = 1  # 1 minuto
 
-# =========================================================
-# 🔇 LOGS OFF
-# =========================================================
-
-logging.getLogger().setLevel(logging.CRITICAL)
+PAIRS = ["EURUSD", "GBPUSD", "EURJPY", "USDCHF", "EURGBP"]
 
 # =========================================================
-# 🔌 CONEXIÓN
+# 🚀 CONEXIÓN
 # =========================================================
 
-print("🔌 Conectando a IQ Option...")
-iq = IQ_Option(EMAIL, PASSWORD)
-iq.connect()
+Iq = IQ_Option(EMAIL, PASSWORD)
+Iq.connect()
 
-if not iq.check_connect():
-    print("❌ Error de conexión")
+if not Iq.check_connect():
+    print("❌ Error conectando a IQ Option")
     exit()
 
-print("✅ Conectado correctamente")
+print("✅ Conectado a IQ Option")
 
 # =========================================================
-# 📊 DATA
-# =========================================================
-
-def get_candles(pair, timeframe, count):
-    candles = iq.get_candles(pair, timeframe, count, time.time())
-    if candles is None:
-        return None
-
-    import pandas as pd
-    df = pd.DataFrame(candles)
-
-    df.rename(columns={
-        "max": "high",
-        "min": "low"
-    }, inplace=True)
-
-    return df
-
-# =========================================================
-# 💰 RESULTADO REAL
-# =========================================================
-
-def check_result(order_id):
-
-    while True:
-        check, win = iq.check_win_v4(order_id)
-
-        if check:
-            if win > 0:
-                return 1  # WIN
-            else:
-                return 0  # LOSS
-
-        time.sleep(1)
-
-# =========================================================
-# 🚀 BOT LOOP
+# 🔄 VARIABLES CONTROL
 # =========================================================
 
 trade_open = False
 last_trade_time = 0
+TRADE_COOLDOWN = 60  # segundos (evita spam)
+
+# =========================================================
+# 📊 OBTENER DATOS
+# =========================================================
+
+def get_candles(pair, timeframe, count):
+    candles = Iq.get_candles(pair, timeframe, count, time.time())
+    import pandas as pd
+    df = pd.DataFrame(candles)
+    df.rename(columns={
+        "max": "high",
+        "min": "low"
+    }, inplace=True)
+    return df
+
+# =========================================================
+# 🎯 LOOP PRINCIPAL
+# =========================================================
 
 while True:
     try:
+        # evitar operar muy seguido
+        if time.time() - last_trade_time < TRADE_COOLDOWN:
+            time.sleep(1)
+            continue
 
+        # evitar múltiples operaciones abiertas
         if trade_open:
             time.sleep(1)
             continue
 
         for pair in PAIRS:
 
-            # =========================
-            # 📊 DATOS
-            # =========================
+            # =============================
+            # VALIDAR SI ESTÁ ABIERTO
+            # =============================
+            open_assets = Iq.get_all_open_time()
+
+            if not open_assets["binary"][pair]["open"]:
+                print(f"⛔ {pair} cerrado")
+                continue
+
+            # =============================
+            # DATOS
+            # =============================
             df_m1 = get_candles(pair, 60, 50)
             df_5s = get_candles(pair, 5, 50)
 
-            if df_m1 is None or df_5s is None:
+            # =============================
+            # SEÑAL
+            # =============================
+            direction, exp, pattern = pro_signal(df_m1, df_5s)
+
+            if direction is None:
                 continue
 
-            # =========================
-            # 🧠 SEÑAL IA
-            # =========================
-            signal, expiration, pattern = pro_signal(df_m1, df_5s)
+            print(f"🔥 SEÑAL {pair} → {direction.upper()} | patrón: {pattern}")
 
-            if signal is None:
-                continue
-
-            # evitar overtrading
-            if time.time() - last_trade_time < 60:
-                continue
-
-            print(f"🎯 SEÑAL {pair} → {signal.upper()} | patrón: {pattern}")
-
-            # =========================
-            # 💸 ENTRADA
-            # =========================
-            status, order_id = iq.buy(
-                AMOUNT,
-                pair,
-                signal,
-                expiration
-            )
+            # =============================
+            # EJECUCIÓN REAL
+            # =============================
+            status, trade_id = Iq.buy(AMOUNT, pair, direction, EXPIRATION)
 
             if status:
-                print("✅ OPERACIÓN ABIERTA")
+                print(f"✅ OPERACIÓN ABIERTA → {pair} {direction}")
                 trade_open = True
                 last_trade_time = time.time()
 
-                # =========================
-                # 🧾 RESULTADO
-                # =========================
-                result = check_result(order_id)
+                # =============================
+                # RESULTADO
+                # =============================
+                result = Iq.check_win_v4(trade_id)
 
-                if result == 1:
-                    print("🏆 WIN")
+                if result > 0:
+                    print("💰 WIN")
+                    update_ai(1, pattern)
                 else:
                     print("❌ LOSS")
-
-                # =========================
-                # 🧠 IA APRENDE
-                # =========================
-                update_result(result, pattern)
+                    update_ai(0, pattern)
 
                 trade_open = False
 
             else:
-                print("❌ Error al abrir operación")
+                print(f"❌ ERROR al abrir operación en {pair}")
+                time.sleep(2)  # evita spam
 
         time.sleep(1)
 
     except Exception as e:
-        print("⚠️ ERROR:", e)
+        print("⚠️ ERROR GENERAL:", e)
         time.sleep(5)
