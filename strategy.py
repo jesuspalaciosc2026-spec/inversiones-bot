@@ -1,212 +1,266 @@
-import numpy as np
+import json
+import os
+
+MEMORY_FILE = "ai_memory.json"
 
 # =========================================================
-# 🧠 MEMORIA ADAPTATIVA
+# 🧠 MEMORIA IA
 # =========================================================
 
-trade_history = []
+def load_memory():
+    if not os.path.exists(MEMORY_FILE):
+        return {
+            "wins": 0,
+            "losses": 0,
+            "patterns": {
+                "trend_call": 0,
+                "trend_put": 0,
+                "trap_call": 0,
+                "trap_put": 0
+            },
+            "confidence": {
+                "trend_call": 1.0,
+                "trend_put": 1.0,
+                "trap_call": 1.0,
+                "trap_put": 1.0
+            }
+        }
+
+    with open(MEMORY_FILE, "r") as f:
+        return json.load(f)
 
 
-def update_result(result):
-    trade_history.append(result)
-    if len(trade_history) > 20:
-        trade_history.pop(0)
-
-
-def get_winrate():
-    if len(trade_history) < 5:
-        return 0.5
-    return sum(trade_history) / len(trade_history)
-
-
-# =========================================================
-# ⚙️ ADAPTACIÓN DINÁMICA
-# =========================================================
-
-def dynamic_threshold():
-
-    winrate = get_winrate()
-
-    if winrate < 0.4:
-        return 75
-    elif winrate > 0.65:
-        return 60
-
-    return 65
-
-
-def market_blocked():
-
-    if len(trade_history) < 5:
-        return False
-
-    if trade_history[-3:] == [0, 0, 0]:
-        return True
-
-    return False
+def save_memory(mem):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(mem, f)
 
 
 # =========================================================
-# 📊 MICROESTRUCTURA
+# 🧠 CONTEXTO (M1)
+# =========================================================
+
+def get_context(df):
+
+    highs = df["high"].tail(5).values
+    lows = df["low"].tail(5).values
+
+    bullish = all(highs[i] > highs[i-1] for i in range(1, len(highs))) and \
+              all(lows[i] > lows[i-1] for i in range(1, len(lows)))
+
+    bearish = all(highs[i] < highs[i-1] for i in range(1, len(highs))) and \
+              all(lows[i] < lows[i-1] for i in range(1, len(lows)))
+
+    if bullish:
+        return "call"
+
+    if bearish:
+        return "put"
+
+    return None
+
+
+# =========================================================
+# 📊 MICROESTRUCTURA (5s)
 # =========================================================
 
 def get_ticks(df_5s):
     return df_5s.tail(12)
 
 
-def efficiency(ticks):
+def micro_analysis(ticks):
 
-    move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
+    up = 0
+    down = 0
+    rejections = 0
 
-    path = sum(abs(ticks.iloc[i]["close"] - ticks.iloc[i-1]["close"])
-               for i in range(1, len(ticks)))
+    for i in range(len(ticks)):
+        o = ticks.iloc[i]["open"]
+        c = ticks.iloc[i]["close"]
+        h = ticks.iloc[i]["high"]
+        l = ticks.iloc[i]["low"]
 
-    if path == 0:
-        return 0
+        body = abs(c - o)
+        wick = (h - l) - body
 
-    return abs(move) / path
+        if c > o:
+            up += 1
+        else:
+            down += 1
 
+        if wick > body:
+            rejections += 1
 
-def pressure(ticks):
-
-    up = sum(1 for i in range(len(ticks)) if ticks.iloc[i]["close"] > ticks.iloc[i]["open"])
-    down = len(ticks) - up
-
-    return up, down
-
-
-def close_position(ticks):
-
-    close = ticks.iloc[-1]["close"]
-    high = ticks["high"].max()
-    low = ticks["low"].min()
-
-    if high == low:
-        return 0.5
-
-    return (close - low) / (high - low)
+    return up, down, rejections
 
 
-def manipulation(ticks):
+# =========================================================
+# 🧠 DETECTAR MANIPULACIÓN
+# =========================================================
+
+def detect_trap(ticks):
 
     last = ticks.iloc[-1]
     prev = ticks.iloc[-2]
 
     if last["high"] > prev["high"] and last["close"] < prev["high"]:
-        return True
+        return "put"
 
     if last["low"] < prev["low"] and last["close"] > prev["low"]:
-        return True
+        return "call"
 
-    return False
+    return None
 
 
 # =========================================================
-# 🎯 SCORE
+# 🧠 DETECTAR PATRÓN
 # =========================================================
 
-def score_candle(ticks):
+def detect_pattern(direction, df_m1, ticks):
 
-    eff = efficiency(ticks)
-    cp = close_position(ticks)
-    up, down = pressure(ticks)
+    last = df_m1.iloc[-1]
+    prev = df_m1.iloc[-2]
+
+    # tendencia limpia
+    if direction == "call" and last["close"] > prev["close"]:
+        return "trend_call"
+
+    if direction == "put" and last["close"] < prev["close"]:
+        return "trend_put"
+
+    # si no es tendencia → es trampa
+    return "trap_call" if direction == "call" else "trap_put"
+
+
+# =========================================================
+# 🎯 SCORE CON IA
+# =========================================================
+
+def build_score(direction, ticks, pattern, mem):
+
+    up, down, rejections = micro_analysis(ticks)
 
     score = 0
-    direction = None
 
-    if eff > 0.6:
+    # dominancia
+    if direction == "call" and up > down:
+        score += 30
+
+    if direction == "put" and down > up:
+        score += 30
+
+    # rechazos institucionales
+    if rejections >= 3:
         score += 20
 
-    if cp > 0.7:
-        score += 25
-        direction = "call"
+    # tendencia interna
+    move = ticks.iloc[-1]["close"] - ticks.iloc[0]["open"]
 
-    elif cp < 0.3:
-        score += 25
-        direction = "put"
+    if direction == "call" and move > 0:
+        score += 20
 
-    if up > down:
-        score += 10
-    else:
-        score += 10
+    if direction == "put" and move < 0:
+        score += 20
 
-    return score, direction
+    # 🔥 IA: multiplicador por confianza
+    confidence = mem["confidence"].get(pattern, 1.0)
+    score *= confidence
+
+    return score
 
 
 # =========================================================
-# 🚀 PRO SIGNAL
+# 🚀 PRO SIGNAL FINAL
 # =========================================================
 
 def pro_signal(df_m1, df_5s):
 
-    if market_blocked():
-        return None, None
+    mem = load_memory()
 
-    if df_5s is None or len(df_5s) < 20:
-        return None, None
+    if df_m1 is None or df_5s is None:
+        return None, None, None
+
+    if len(df_m1) < 20 or len(df_5s) < 20:
+        return None, None, None
+
+    # =============================
+    # CONTEXTO
+    # =============================
+    direction = get_context(df_m1)
+
+    if direction is None:
+        return None, None, None
 
     ticks = get_ticks(df_5s)
 
-    if manipulation(ticks):
-        return None, None
+    # =============================
+    # MANIPULACIÓN
+    # =============================
+    trap = detect_trap(ticks)
+    if trap:
+        direction = trap
 
-    score, direction = score_candle(ticks)
+    # =============================
+    # PATRÓN
+    # =============================
+    pattern = detect_pattern(direction, df_m1, ticks)
 
-    threshold = dynamic_threshold()
+    # =============================
+    # SCORE IA
+    # =============================
+    score = build_score(direction, ticks, pattern, mem)
 
-    if score < threshold or direction is None:
-        return None, None
+    # 🔥 umbral dinámico base
+    if score < 50:
+        return None, None, None
 
-    # =====================================================
-    # 🔥 FILTROS PROFESIONALES
-    # =====================================================
-
+    # =============================
+    # FILTROS PRO
+    # =============================
     last = df_m1.iloc[-1]
 
-    # ---- 1. EVITAR VELA GRANDE (FOMO)
-    candle_size = abs(last["close"] - last["open"])
-    avg_size = (df_m1["high"] - df_m1["low"]).tail(10).mean()
-
-    if candle_size > avg_size * 1.7:
-        return None, None
-
-    # ---- 2. EVITAR RECHAZO FUERTE (AGOTAMIENTO)
-    upper_wick = last["high"] - max(last["close"], last["open"])
-    lower_wick = min(last["close"], last["open"]) - last["low"]
     body = abs(last["close"] - last["open"])
+    avg = (df_m1["high"] - df_m1["low"]).tail(10).mean()
 
-    if direction == "call" and upper_wick > body * 1.5:
-        return None, None
+    # evitar velas explosivas (FOMO)
+    if body > avg * 1.7:
+        return None, None, None
 
-    if direction == "put" and lower_wick > body * 1.5:
-        return None, None
+    # evitar extremos
+    price = last["close"]
+    high = df_m1["high"].tail(10).max()
+    low = df_m1["low"].tail(10).min()
 
-    # ---- 3. EVITAR MÁXIMOS / MÍNIMOS
-    last_price = last["close"]
-    recent_high = df_m1["high"].tail(10).max()
-    recent_low = df_m1["low"].tail(10).min()
+    if direction == "call" and abs(price - high) < 0.00015:
+        return None, None, None
 
-    if direction == "call" and abs(last_price - recent_high) < 0.00015:
-        return None, None
+    if direction == "put" and abs(price - low) < 0.00015:
+        return None, None, None
 
-    if direction == "put" and abs(last_price - recent_low) < 0.00015:
-        return None, None
+    return direction, 1, pattern
 
-    # ---- 4. EXIGIR PULLBACK
-    last3 = df_m1.tail(3)
 
-    if direction == "call":
-        pullback = last3.iloc[-2]["close"] < last3.iloc[-3]["close"]
-        if not pullback:
-            return None, None
+# =========================================================
+# 🧠 ACTUALIZAR IA (CLAVE)
+# =========================================================
 
-    if direction == "put":
-        pullback = last3.iloc[-2]["close"] > last3.iloc[-3]["close"]
-        if not pullback:
-            return None, None
+def update_ai(result, pattern):
 
-    # =====================================================
-    # 🎯 ENTRADA FINAL
-    # =====================================================
+    mem = load_memory()
 
-    return direction, 1
+    if result == 1:
+        mem["wins"] += 1
+        mem["patterns"][pattern] += 1
+
+        # refuerzo fuerte
+        mem["confidence"][pattern] *= 1.05
+
+    else:
+        mem["losses"] += 1
+
+        # castigo controlado
+        mem["confidence"][pattern] *= 0.95
+
+    # límites de seguridad
+    mem["confidence"][pattern] = max(0.5, min(2.0, mem["confidence"][pattern]))
+
+    save_memory(mem)
