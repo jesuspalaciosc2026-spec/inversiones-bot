@@ -108,9 +108,11 @@ def detect_trap(ticks):
     last = ticks.iloc[-1]
     prev = ticks.iloc[-2]
 
+    # ruptura falsa arriba
     if last["high"] > prev["high"] and last["close"] < prev["high"]:
         return "put"
 
+    # ruptura falsa abajo
     if last["low"] < prev["low"] and last["close"] > prev["low"]:
         return "call"
 
@@ -145,14 +147,14 @@ def build_score(direction, ticks, pattern, mem):
 
     score = 0
 
-    # dominancia micro
+    # dominancia
     if direction == "call" and up > down:
         score += 30
 
     if direction == "put" and down > up:
         score += 30
 
-    # rechazos (mechas)
+    # rechazos
     if rejections >= 3:
         score += 20
 
@@ -165,7 +167,7 @@ def build_score(direction, ticks, pattern, mem):
     if direction == "put" and move < 0:
         score += 20
 
-    # 🧠 IA: multiplicador de confianza
+    # IA adaptativa
     confidence = mem["confidence"].get(pattern, 1.0)
     score *= confidence
 
@@ -173,7 +175,7 @@ def build_score(direction, ticks, pattern, mem):
 
 
 # =========================================================
-# 🚀 PRO SIGNAL
+# 🚀 PRO SIGNAL (SNIPER)
 # =========================================================
 
 def pro_signal(df_m1, df_5s):
@@ -186,7 +188,7 @@ def pro_signal(df_m1, df_5s):
     if len(df_m1) < 20 or len(df_5s) < 20:
         return None, None, None
 
-    # CONTEXTO
+    # ================= CONTEXTO =================
     direction = get_context(df_m1)
 
     if direction is None:
@@ -194,31 +196,31 @@ def pro_signal(df_m1, df_5s):
 
     ticks = get_ticks(df_5s)
 
-    # MANIPULACIÓN
+    # ================= MANIPULACIÓN =================
     trap = detect_trap(ticks)
     if trap:
         direction = trap
 
-    # PATRÓN
+    # ================= PATRÓN =================
     pattern = detect_pattern(direction, df_m1, ticks)
 
-    # SCORE
+    # ================= SCORE =================
     score = build_score(direction, ticks, pattern, mem)
 
     if score < 50:
         return None, None, None
 
-    # FILTROS PRO
+    # ================= FILTROS PRO =================
     last = df_m1.iloc[-1]
 
     body = abs(last["close"] - last["open"])
     avg = (df_m1["high"] - df_m1["low"]).tail(10).mean()
 
-    # evitar FOMO
+    # evitar FOMO (velas gigantes)
     if body > avg * 1.7:
         return None, None, None
 
-    # evitar extremos
+    # evitar zonas extremas
     price = last["close"]
     high = df_m1["high"].tail(10).max()
     low = df_m1["low"].tail(10).min()
@@ -246,12 +248,11 @@ def update_ai(result, pattern):
     if result == 1:
         mem["wins"] += 1
         mem["patterns"][pattern] += 1
-        mem["confidence"][pattern] *= 1.05  # refuerzo
+        mem["confidence"][pattern] *= 1.05
     else:
         mem["losses"] += 1
-        mem["confidence"][pattern] *= 0.95  # castigo
+        mem["confidence"][pattern] *= 0.95
 
-    # límites
     mem["confidence"][pattern] = max(0.5, min(2.0, mem["confidence"][pattern]))
 
     save_memory(mem)
