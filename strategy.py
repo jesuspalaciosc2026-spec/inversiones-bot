@@ -29,7 +29,7 @@ def ruptura_lateral(df):
 
 
 # =========================
-# 📉 ZONA QUEMADA
+# 📉 ZONA REPETIDA
 # =========================
 def zona_repetida(df):
     precio = df["close"].iloc[-1]
@@ -113,7 +113,7 @@ def pullback_bajista(df):
 
 
 # =========================
-# 💥 VELAS FUERTES
+# 💥 VELA FUERTE
 # =========================
 def vela_fuerte_bajista(df):
     last = df.iloc[-1]
@@ -132,7 +132,7 @@ def vela_fuerte_alcista(df):
 
 
 # =========================
-# 🔥 SETUP CONTINUACIÓN PUT
+# CONTINUACIÓN PUT
 # =========================
 def setup_continuacion_put(df):
 
@@ -152,7 +152,7 @@ def setup_continuacion_put(df):
 
 
 # =========================
-# 🔥 SETUP CONTINUACIÓN CALL
+# CONTINUACIÓN CALL
 # =========================
 def setup_continuacion_call(df):
 
@@ -172,7 +172,7 @@ def setup_continuacion_call(df):
 
 
 # =========================
-# ⭐ SCORE GENERAL
+# SCORE
 # =========================
 def score_calidad(df, direccion):
     score = 0
@@ -197,51 +197,69 @@ def score_calidad(df, direccion):
 
 
 # =========================
-# 🚀 FUNCIÓN PRINCIPAL
+# GENERAR SEÑAL
 # =========================
 def generate_signal(df):
 
+    if len(df) < 30:
+        return None
+
+    cont_put = setup_continuacion_put(df)
+    if cont_put:
+        return cont_put
+
+    cont_call = setup_continuacion_call(df)
+    if cont_call:
+        return cont_call
+
+    if not is_lateral(df):
+        return None
+
+    direccion = ruptura_lateral(df)
+
+    if direccion is None:
+        return None
+
+    if not continuidad(df, direccion):
+        return None
+
+    if zona_repetida(df):
+        return None
+
+    score = score_calidad(df, direccion)
+
+    if score < 3:
+        return None
+
+    return {
+        "direction": direccion,
+        "score": score
+    }
+
+
+# =========================
+# COMPATIBLE CON BOT.PY
+# =========================
+def pro_signal(df, aggressive=False):
     try:
-        if len(df) < 30:
-            return None
+        signal = generate_signal(df)
 
-        # =========================
-        # 🔥 PRIORIDAD: CONTINUACIÓN
-        # =========================
-        cont_put = setup_continuacion_put(df)
-        if cont_put:
-            return cont_put
+        if signal is None:
+            return None, None, 0
 
-        cont_call = setup_continuacion_call(df)
-        if cont_call:
-            return cont_call
-
-        # =========================
-        # 🔵 LATERAL + RUPTURA
-        # =========================
-        if not is_lateral(df):
-            return None
-
-        direccion = ruptura_lateral(df)
-        if not direccion:
-            return None
-
-        if not continuidad(df, direccion):
-            return None
-
-        if zona_repetida(df):
-            return None
-
-        score = score_calidad(df, direccion)
-
-        if score < 3:
-            return None
-
-        return {
-            "direction": direccion,
-            "score": score
-        }
+        return (
+            signal["direction"],
+            "CONTINUACION",
+            signal["score"]
+        )
 
     except Exception as e:
-        print("Error en estrategia:", e)
-        return None
+        print("Error pro_signal:", e)
+        return None, None, 0
+
+
+# =========================
+# ACTUALIZAR RESULTADO
+# =========================
+def update_result(result):
+    print(f"Resultado operación: {result}")
