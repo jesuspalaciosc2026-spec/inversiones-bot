@@ -1,7 +1,7 @@
 import numpy as np
 
 # ==============================
-# RESULTADOS (para estadísticas)
+# RESULTADOS
 # ==============================
 wins = 0
 losses = 0
@@ -18,7 +18,7 @@ def update_result(result):
 
 
 # ==============================
-# DETECTAR DOMINIO DE VELA
+# ANALIZAR VELA
 # ==============================
 def analizar_vela(df):
     vela = df.iloc[-1]
@@ -31,8 +31,9 @@ def analizar_vela(df):
 
     fuerza = cuerpo / rango
 
+    # Evitar indecisión
     if fuerza < 0.5:
-        return None  # indecisión
+        return None
 
     if vela["close"] > vela["open"]:
         return "call"
@@ -44,23 +45,22 @@ def analizar_vela(df):
 
 
 # ==============================
-# FILTRO: EVITAR IMPULSOS TARDÍOS
+# FILTRO IMPULSO (NO ENTRAR TARDE)
 # ==============================
 def filtro_impulso(df):
     ultimas = df.tail(6)
 
-    velas_alcistas = sum(ultimas["close"] > ultimas["open"])
-    velas_bajistas = sum(ultimas["close"] < ultimas["open"])
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
 
-    # Si ya hay demasiadas velas en una dirección → NO entrar
-    if velas_alcistas >= 4 or velas_bajistas >= 4:
+    if alcistas >= 4 or bajistas >= 4:
         return False
 
     return True
 
 
 # ==============================
-# FILTRO: EVITAR ZONAS DE REVERSIÓN
+# FILTRO ZONA (REVERSIÓN)
 # ==============================
 def filtro_zona(df):
     precio = df["close"].iloc[-1]
@@ -68,7 +68,6 @@ def filtro_zona(df):
     max_60 = df["max"].tail(60).max()
     min_60 = df["min"].tail(60).min()
 
-    # distancia mínima (ajustable)
     if abs(precio - max_60) < (max_60 * 0.0002):
         return False
 
@@ -79,13 +78,12 @@ def filtro_zona(df):
 
 
 # ==============================
-# FILTRO: CONTINUIDAD REAL
+# FILTRO CONTINUIDAD
 # ==============================
 def filtro_continuidad(df, direccion):
     ultimas = df.tail(4)
 
     if direccion == "call":
-        # Debe haber mínimo 2 velas alcistas recientes
         if sum(ultimas["close"] > ultimas["open"]) < 2:
             return False
 
@@ -97,7 +95,7 @@ def filtro_continuidad(df, direccion):
 
 
 # ==============================
-# FILTRO: AGOTAMIENTO
+# FILTRO AGOTAMIENTO
 # ==============================
 def filtro_agotamiento(df):
     vela = df.iloc[-1]
@@ -108,8 +106,27 @@ def filtro_agotamiento(df):
     if rango == 0:
         return False
 
-    # vela débil → no entrar
     if cuerpo < (rango * 0.4):
+        return False
+
+    return True
+
+
+# ==============================
+# 🔥 FILTRO CONTRA TENDENCIA (NUEVO)
+# ==============================
+def filtro_contra_tendencia(df, direccion):
+    ultimas = df.tail(10)
+
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
+
+    # Si venía bajista fuerte → NO CALL
+    if bajistas >= 6 and direccion == "call":
+        return False
+
+    # Si venía alcista fuerte → NO PUT
+    if alcistas >= 6 and direccion == "put":
         return False
 
     return True
@@ -123,13 +140,13 @@ def pro_signal(df, aggressive=True):
         if len(df) < 60:
             return None, None, 0
 
-        # 1️⃣ Analizar vela actual
+        # 1. Dirección de vela
         direccion = analizar_vela(df)
 
         if direccion is None:
             return None, None, 0
 
-        # 2️⃣ Filtros
+        # 2. Filtros
         if not filtro_impulso(df):
             return None, None, 0
 
@@ -142,13 +159,15 @@ def pro_signal(df, aggressive=True):
         if not filtro_agotamiento(df):
             return None, None, 0
 
-        # 3️⃣ Score
-        score = 30
+        if not filtro_contra_tendencia(df, direccion):
+            return None, None, 0
 
+        # 3. Score
+        score = 30
         patron = "continuidad"
 
         return direccion, patron, score
 
     except Exception as e:
-        print("❌ Error estrategia:", e)
+        print("❌ ERROR estrategia:", e)
         return None, None, 0
