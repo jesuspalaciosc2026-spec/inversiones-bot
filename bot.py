@@ -23,7 +23,7 @@ PAIRS = [
 
 AMOUNT = 3333
 EXPIRATION = 1
-MAX_OPERATIONS = 90
+MAX_OPERATIONS = 3
 
 bot_active = True
 operations_count = 0
