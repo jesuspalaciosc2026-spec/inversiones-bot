@@ -1,156 +1,173 @@
-import pandas as pd
+import numpy as np
+
+# ==============================
+# RESULTADOS
+# ==============================
+wins = 0
+losses = 0
+
+def update_result(result):
+    global wins, losses
+
+    if result > 0:
+        wins += 1
+    else:
+        losses += 1
+
+    print(f"📊 WIN: {wins} | LOSS: {losses}")
 
 
-# =========================
-# 🔍 DETECCIÓN DE LATERALIDAD
-# =========================
-def is_lateral(df):
-    last = df.tail(20)
-    rango = last["high"].max() - last["low"].min()
+# ==============================
+# ANALIZAR VELA
+# ==============================
+def analizar_vela(df):
+    vela = df.iloc[-1]
 
-    return rango < 0.002
+    cuerpo = abs(vela["close"] - vela["open"])
+    rango = vela["max"] - vela["min"]
 
+    if rango == 0:
+        return None
 
-# =========================
-# 💥 RUPTURA FUERTE REAL
-# =========================
-def ruptura_fuerte(df):
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
+    fuerza = cuerpo / rango
 
-    cuerpo = abs(last["close"] - last["open"])
-    rango = last["high"] - last["low"]
+    # Evitar indecisión
+    if fuerza < 0.5:
+        return None
 
-    if cuerpo > (rango * 0.6):
+    if vela["close"] > vela["open"]:
+        return "call"
 
-        if last["close"] > prev["high"]:
-            return "call"
-
-        if last["close"] < prev["low"]:
-            return "put"
+    elif vela["close"] < vela["open"]:
+        return "put"
 
     return None
 
 
-# =========================
-# 📉 ZONA QUEMADA
-# =========================
-def zona_repetida(df):
-    precio = df["close"].iloc[-1]
-    rep = 0
+# ==============================
+# FILTRO IMPULSO (NO ENTRAR TARDE)
+# ==============================
+def filtro_impulso(df):
+    ultimas = df.tail(6)
 
-    for i in range(-15, -1):
-        if abs(df["close"].iloc[i] - precio) < 0.0003:
-            rep += 1
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
 
-    return rep >= 3
-
-
-# =========================
-# 🕯 VELA LIMPIA
-# =========================
-def vela_limpia(df):
-    last = df.iloc[-1]
-
-    cuerpo = abs(last["close"] - last["open"])
-
-    upper = last["high"] - max(last["open"], last["close"])
-    lower = min(last["open"], last["close"]) - last["low"]
-
-    if upper > cuerpo:
-        return False
-
-    if lower > cuerpo:
+    if alcistas >= 4 or bajistas >= 4:
         return False
 
     return True
 
 
-# =========================
-# 📈 CONTINUIDAD (TU PATRÓN)
-# =========================
-def continuidad(df, direccion):
-    c1 = df.iloc[-2]
-    c2 = df.iloc[-3]
+# ==============================
+# FILTRO ZONA (REVERSIÓN)
+# ==============================
+def filtro_zona(df):
+    precio = df["close"].iloc[-1]
+
+    max_60 = df["max"].tail(60).max()
+    min_60 = df["min"].tail(60).min()
+
+    if abs(precio - max_60) < (max_60 * 0.0002):
+        return False
+
+    if abs(precio - min_60) < (min_60 * 0.0002):
+        return False
+
+    return True
+
+
+# ==============================
+# FILTRO CONTINUIDAD
+# ==============================
+def filtro_continuidad(df, direccion):
+    ultimas = df.tail(4)
 
     if direccion == "call":
-        return c1["close"] > c1["open"] or c2["close"] > c2["open"]
+        if sum(ultimas["close"] > ultimas["open"]) < 2:
+            return False
 
     if direccion == "put":
-        return c1["close"] < c1["open"] or c2["close"] < c2["open"]
+        if sum(ultimas["close"] < ultimas["open"]) < 2:
+            return False
 
-    return False
-
-
-# =========================
-# ⭐ SCORE
-# =========================
-def score_calidad(df, direccion):
-    score = 0
-    last = df.iloc[-1]
-
-    cuerpo = abs(last["close"] - last["open"])
-    rango = last["high"] - last["low"]
-
-    # fuerza
-    if cuerpo > (rango * 0.6):
-        score += 2
-
-    # continuidad
-    if continuidad(df, direccion):
-        score += 2
-
-    # vela limpia
-    if vela_limpia(df):
-        score += 1
-
-    # penalizaciones
-    if zona_repetida(df):
-        score -= 2
-
-    if rango > df["high"].rolling(20).mean().iloc[-1] * 1.5:
-        score -= 2
-
-    return score
+    return True
 
 
-# =========================
-# 🚀 FUNCIÓN PRINCIPAL (CLAVE)
-# =========================
-def generate_signal(df):
+# ==============================
+# FILTRO AGOTAMIENTO
+# ==============================
+def filtro_agotamiento(df):
+    vela = df.iloc[-1]
 
+    cuerpo = abs(vela["close"] - vela["open"])
+    rango = vela["max"] - vela["min"]
+
+    if rango == 0:
+        return False
+
+    if cuerpo < (rango * 0.4):
+        return False
+
+    return True
+
+
+# ==============================
+# 🔥 FILTRO CONTRA TENDENCIA (NUEVO)
+# ==============================
+def filtro_contra_tendencia(df, direccion):
+    ultimas = df.tail(10)
+
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
+
+    # Si venía bajista fuerte → NO CALL
+    if bajistas >= 6 and direccion == "call":
+        return False
+
+    # Si venía alcista fuerte → NO PUT
+    if alcistas >= 6 and direccion == "put":
+        return False
+
+    return True
+
+
+# ==============================
+# SEÑAL PRINCIPAL
+# ==============================
+def pro_signal(df, aggressive=True):
     try:
-        if len(df) < 30:
-            return None
+        if len(df) < 60:
+            return None, None, 0
 
-        # 1. lateralidad
-        if not is_lateral(df):
-            return None
+        # 1. Dirección de vela
+        direccion = analizar_vela(df)
 
-        # 2. ruptura
-        direccion = ruptura_fuerte(df)
-        if not direccion:
-            return None
+        if direccion is None:
+            return None, None, 0
 
-        # 3. continuidad
-        if not continuidad(df, direccion):
-            return None
+        # 2. Filtros
+        if not filtro_impulso(df):
+            return None, None, 0
 
-        # 4. evitar zonas malas
-        if zona_repetida(df):
-            return None
+        if not filtro_zona(df):
+            return None, None, 0
 
-        # 5. score
-        score = score_calidad(df, direccion)
+        if not filtro_continuidad(df, direccion):
+            return None, None, 0
 
-        if score < 3:
-            return None
+        if not filtro_agotamiento(df):
+            return None, None, 0
 
-        return {
-            "direction": direccion,
-            "score": score
-        }
+        if not filtro_contra_tendencia(df, direccion):
+            return None, None, 0
+
+        # 3. Score
+        score = 30
+        patron = "continuidad"
+
+        return direccion, patron, score
 
     except Exception as e:
-        print("Error en estrategia:", e)
-        return None
+        print("❌ ERROR estrategia:", e)
+        return None, None, 0
