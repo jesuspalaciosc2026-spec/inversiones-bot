@@ -31,26 +31,17 @@ last_candle_time = {}
 last_update_id = None
 
 # ==============================
-# TELEGRAM (CORREGIDO)
+# TELEGRAM
 # ==============================
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        r = requests.post(url, data={
+        requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": msg
         })
-
-        resp = r.json()
-
-        if not resp.get("ok"):
-            print(f"❌ Error Telegram real: {resp}")
-        else:
-            print("📩 Enviado a Telegram")
-
     except Exception as e:
         print(f"❌ Error Telegram: {e}")
-
 
 # ==============================
 # COMANDOS TELEGRAM
@@ -60,8 +51,7 @@ def check_telegram_commands():
 
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-        r = requests.get(url)
-        resp = r.json()
+        resp = requests.get(url).json()
 
         if not resp.get("ok"):
             return
@@ -84,22 +74,21 @@ def check_telegram_commands():
                         send_telegram("✅ BOT ACTIVADO")
 
     except Exception as e:
-        print("❌ Error comandos Telegram:", e)
-
+        print("❌ Error Telegram:", e)
 
 # ==============================
 # CONEXIÓN IQ OPTION
 # ==============================
-print("🔌 Conectando a IQ Option...")
+print("🔌 Conectando...")
 Iq = IQ_Option(EMAIL, PASSWORD)
 Iq.connect()
 
 if not Iq.check_connect():
-    print("❌ Error de conexión")
+    print("❌ Error conexión")
     exit()
 
-print("✅ Conectado a IQ Option")
-send_telegram("🤖 BOT INICIADO CORRECTAMENTE")
+print("✅ Conectado")
+send_telegram("🤖 BOT INICIADO")
 
 # ==============================
 # LOOP PRINCIPAL
@@ -113,8 +102,7 @@ while True:
             continue
 
         if operations_count >= MAX_OPERATIONS:
-            print("⛔ Límite alcanzado")
-            send_telegram("🏁 Se alcanzó el límite de operaciones")
+            send_telegram("🏁 Límite alcanzado")
             while True:
                 time.sleep(60)
 
@@ -134,23 +122,26 @@ while True:
 
                 current_time = candles[-1]["from"]
 
-                # SOLO nueva vela
+                # Evitar repetir vela
                 if pair in last_candle_time and last_candle_time[pair] == current_time:
                     continue
 
                 last_candle_time[pair] = current_time
 
-                print(f"📊 Nueva vela → {pair}")
+                print(f"📊 {pair} nueva vela")
 
-                direccion, patron, score = pro_signal(df, aggressive=True)
+                # ==============================
+                # SEÑAL CORREGIDA
+                # ==============================
+                signal = pro_signal(df, aggressive=True)
 
-                if direccion is None:
+                if not signal:
                     continue
 
-                # 🔥 INVERTIR SEÑAL
-                direccion = "put" if direccion == "call" else "call"
+                direccion = signal["direction"]
+                score = signal["score"]
 
-                print(f"🔥 SEÑAL {pair}: {direccion.upper()} | score {score}")
+                print(f"🔥 {pair} → {direccion.upper()} | score {score}")
 
                 send_telegram(
                     f"📊 {pair}\n"
@@ -159,15 +150,14 @@ while True:
                 )
 
                 # ==============================
-                # ABRIR OPERACIÓN
+                # EJECUTAR OPERACIÓN
                 # ==============================
                 status, trade_id = Iq.buy(AMOUNT, pair, direccion, EXPIRATION)
 
                 if status:
                     operations_count += 1
 
-                    print("✅ Operación abierta")
-                    send_telegram(f"🚀 OPERACIÓN ABIERTA\n{pair} → {direccion.upper()}")
+                    send_telegram(f"🚀 {pair} → {direccion.upper()}")
 
                     time.sleep(EXPIRATION * 60)
 
@@ -178,7 +168,7 @@ while True:
                     send_telegram(f"📈 Resultado: {result}")
 
                 else:
-                    print("❌ Error al abrir operación")
+                    print("❌ Error operación")
 
             except Exception as e:
                 print(f"❌ Error en {pair}: {e}")
