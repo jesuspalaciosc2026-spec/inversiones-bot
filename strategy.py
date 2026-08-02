@@ -31,13 +31,11 @@ def analizar_vela(df):
 
     fuerza = cuerpo / rango
 
-    # Evitar indecisión
     if fuerza < 0.5:
         return None
 
     if vela["close"] > vela["open"]:
         return "call"
-
     elif vela["close"] < vela["open"]:
         return "put"
 
@@ -45,7 +43,7 @@ def analizar_vela(df):
 
 
 # ==============================
-# FILTRO IMPULSO (NO ENTRAR TARDE)
+# FILTROS
 # ==============================
 def filtro_impulso(df):
     ultimas = df.tail(6)
@@ -53,15 +51,9 @@ def filtro_impulso(df):
     alcistas = sum(ultimas["close"] > ultimas["open"])
     bajistas = sum(ultimas["close"] < ultimas["open"])
 
-    if alcistas >= 4 or bajistas >= 4:
-        return False
-
-    return True
+    return not (alcistas >= 4 or bajistas >= 4)
 
 
-# ==============================
-# FILTRO ZONA (REVERSIÓN)
-# ==============================
 def filtro_zona(df):
     precio = df["close"].iloc[-1]
 
@@ -77,26 +69,18 @@ def filtro_zona(df):
     return True
 
 
-# ==============================
-# FILTRO CONTINUIDAD
-# ==============================
 def filtro_continuidad(df, direccion):
     ultimas = df.tail(4)
 
     if direccion == "call":
-        if sum(ultimas["close"] > ultimas["open"]) < 2:
-            return False
+        return sum(ultimas["close"] > ultimas["open"]) >= 2
 
     if direccion == "put":
-        if sum(ultimas["close"] < ultimas["open"]) < 2:
-            return False
+        return sum(ultimas["close"] < ultimas["open"]) >= 2
 
-    return True
+    return False
 
 
-# ==============================
-# FILTRO AGOTAMIENTO
-# ==============================
 def filtro_agotamiento(df):
     vela = df.iloc[-1]
 
@@ -106,26 +90,18 @@ def filtro_agotamiento(df):
     if rango == 0:
         return False
 
-    if cuerpo < (rango * 0.4):
-        return False
-
-    return True
+    return cuerpo >= (rango * 0.4)
 
 
-# ==============================
-# 🔥 FILTRO CONTRA TENDENCIA (NUEVO)
-# ==============================
 def filtro_contra_tendencia(df, direccion):
     ultimas = df.tail(10)
 
     alcistas = sum(ultimas["close"] > ultimas["open"])
     bajistas = sum(ultimas["close"] < ultimas["open"])
 
-    # Si venía bajista fuerte → NO CALL
     if bajistas >= 6 and direccion == "call":
         return False
 
-    # Si venía alcista fuerte → NO PUT
     if alcistas >= 6 and direccion == "put":
         return False
 
@@ -133,41 +109,41 @@ def filtro_contra_tendencia(df, direccion):
 
 
 # ==============================
-# SEÑAL PRINCIPAL
+# 🔥 SEÑAL CORREGIDA
 # ==============================
 def pro_signal(df, aggressive=True):
     try:
         if len(df) < 60:
-            return None, None, 0
+            return None
 
-        # 1. Dirección de vela
         direccion = analizar_vela(df)
 
         if direccion is None:
-            return None, None, 0
+            return None
 
-        # 2. Filtros
         if not filtro_impulso(df):
-            return None, None, 0
+            return None
 
         if not filtro_zona(df):
-            return None, None, 0
+            return None
 
         if not filtro_continuidad(df, direccion):
-            return None, None, 0
+            return None
 
         if not filtro_agotamiento(df):
-            return None, None, 0
+            return None
 
         if not filtro_contra_tendencia(df, direccion):
-            return None, None, 0
+            return None
 
-        # 3. Score
         score = 30
-        patron = "continuidad"
 
-        return direccion, patron, score
+        # 🔥 RETORNO CORRECTO (SIN TUPLE)
+        return {
+            "direction": direccion,
+            "score": score
+        }
 
     except Exception as e:
         print("❌ ERROR estrategia:", e)
-        return None, None, 0
+        return None
