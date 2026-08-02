@@ -1,140 +1,103 @@
 import time
+import os
 import pandas as pd
 from iqoptionapi.stable_api import IQ_Option
 from strategy import generate_signal
-import os
-import requests
 
-# ==============================
-# CONFIG
-# ==============================
-
+# =========================
+# 🔐 VARIABLES DE ENTORNO
+# =========================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# =========================
+# ⚙ CONFIGURACIÓN
+# =========================
+PAIR = "EURUSD-OTC"   # puedes cambiarlo
+AMOUNT = 1000            # monto de entrada
+EXPIRATION = 1        # 1 minuto (tu preferido)
 
-PAIRS = ["EURUSD", "GBPUSD", "EURGBP", "USDCHF", "EURJPY"]
+# =========================
+# 🔌 CONEXIÓN IQ OPTION
+# =========================
+Iq = IQ_Option(EMAIL, PASSWORD)
+Iq.connect()
 
-AMOUNT = 1000
-TIMEFRAME = 60  # 1 minuto
-EXPIRATION = 1  # 1 minuto
-
-trade_open = False
-last_trade_time = 0
-
-# ==============================
-# TELEGRAM
-# ==============================
-
-def send_telegram(message):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        data = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message
-        }
-        response = requests.post(url, data=data).json()
-
-        if not response.get("ok"):
-            print("Error Telegram:", response)
-
-    except Exception as e:
-        print("Error enviando Telegram:", e)
-
-# ==============================
-# CONEXIÓN IQ OPTION
-# ==============================
-
-API = IQ_Option(EMAIL, PASSWORD)
-API.connect()
-
-if not API.check_connect():
-    print("❌ Error conectando")
+if not Iq.check_connect():
+    print("❌ Error conectando a IQ Option")
     exit()
 else:
-    print("✅ Conectado correctamente")
+    print("✅ Conectado a IQ Option")
 
-# ==============================
-# FUNCIONES
-# ==============================
+# =========================
+# 🧠 CONTROL DE OPERACIONES
+# =========================
+trade_open = False
+last_candle_time = None
 
-def get_candles(pair, timeframe=60, count=50):
-    candles = API.get_candles(pair, timeframe, count, time.time())
+
+# =========================
+# 📊 OBTENER VELAS
+# =========================
+def get_candles():
+    candles = Iq.get_candles(PAIR, 60, 50, time.time())
+
     df = pd.DataFrame(candles)
 
-    df["open"] = df["open"]
-    df["close"] = df["close"]
-    df["high"] = df["max"]
-    df["low"] = df["min"]
+    df.rename(columns={
+        "min": "low",
+        "max": "high"
+    }, inplace=True)
 
     return df
 
 
-# ==============================
-# LOOP PRINCIPAL
-# ==============================
-
-print("🚀 BOT INICIADO")
-
+# =========================
+# 🚀 LOOP PRINCIPAL
+# =========================
 while True:
     try:
-        for pair in PAIRS:
+        df = get_candles()
 
-            df = get_candles(pair)
+        current_time = df["from"].iloc[-1]
 
-            signal = generate_signal(df)
+        # evitar repetir vela
+        if last_candle_time == current_time:
+            time.sleep(1)
+            continue
 
-            current_time = time.time()
+        last_candle_time = current_time
 
-            # Evitar sobreoperar (1 operación cada 60s)
-            if trade_open and current_time - last_trade_time < 60:
-                continue
+        signal = generate_signal(df)
 
-            if signal and not trade_open:
+        if signal and not trade_open:
 
-                direction = signal["direction"]
-                score = signal["score"]
+            direction = signal["direction"]
+            score = signal["score"]
 
-                print(f"📊 Señal en {pair} | Dirección: {direction} | Score: {score}")
+            print(f"\n📊 SEÑAL DETECTADA")
+            print(f"👉 Dirección: {direction}")
+            print(f"⭐ Score: {score}")
 
-                if score >= 6:
+            # ejecutar operación
+            check, trade_id = Iq.buy(AMOUNT, PAIR, direction, EXPIRATION)
 
-                    status, trade_id = API.buy(AMOUNT, pair, direction, EXPIRATION)
+            if check:
+                print("✅ OPERACIÓN EJECUTADA")
 
-                    if status:
-                        trade_open = True
-                        last_trade_time = current_time
+                trade_open = True
 
-                        msg = f"""
-📈 NUEVA OPERACIÓN
+                # esperar resultado
+                time.sleep(EXPIRATION * 60)
 
-Par: {pair}
-Dirección: {direction.upper()}
-Monto: {AMOUNT}
-Score: {score}
-Expiración: 1 minuto
-"""
-                        print(msg)
-                        send_telegram(msg)
+                trade_open = False
+                print("⏳ Esperando nueva oportunidad...\n")
 
-                        # Esperar resultado
-                        time.sleep(60)
-
-                        result = API.check_win_v4(trade_id)
-
-                        if result > 0:
-                            print(f"✅ GANANCIA: {result}")
-                            send_telegram(f"✅ GANANCIA: {result}")
-                        else:
-                            print(f"❌ PÉRDIDA: {result}")
-                            send_telegram(f"❌ PÉRDIDA: {result}")
-
-                        trade_open = False
+            else:
+                print("❌ Error al ejecutar operación")
 
         time.sleep(2)
 
     except Exception as e:
-        print("⚠️ Error:", e)
+        print("⚠ ERROR:", e)
         time.sleep(5)
