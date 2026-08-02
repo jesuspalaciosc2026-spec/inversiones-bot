@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-from datetime import datetime
+import pandas as pd
 from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal, update_result
 
@@ -21,42 +21,52 @@ PAIRS = [
     "EURJPY-OTC"
 ]
 
-AMOUNT = 800
-EXPIRATION = 1  # 1 minuto
-
+AMOUNT = 900
+EXPIRATION = 1
 MAX_OPERATIONS = 90
 
 bot_active = True
 operations_count = 0
 last_candle_time = {}
+last_update_id = None
 
 # ==============================
-# TELEGRAM
+# TELEGRAM (CORREGIDO)
 # ==============================
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={
+        r = requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": msg
         })
-    except:
-        print("❌ Error enviando a Telegram")
+
+        resp = r.json()
+
+        if not resp.get("ok"):
+            print(f"❌ Error Telegram real: {resp}")
+        else:
+            print("📩 Enviado a Telegram")
+
+    except Exception as e:
+        print(f"❌ Error Telegram: {e}")
 
 
 # ==============================
 # COMANDOS TELEGRAM
 # ==============================
-last_update_id = None
-
 def check_telegram_commands():
     global bot_active, last_update_id
 
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-        res = requests.get(url).json()
+        r = requests.get(url)
+        resp = r.json()
 
-        for update in res["result"]:
+        if not resp.get("ok"):
+            return
+
+        for update in resp.get("result", []):
             update_id = update["update_id"]
 
             if last_update_id is None or update_id > last_update_id:
@@ -74,7 +84,7 @@ def check_telegram_commands():
                         send_telegram("✅ BOT ACTIVADO")
 
     except Exception as e:
-        print("Error Telegram:", e)
+        print("❌ Error comandos Telegram:", e)
 
 
 # ==============================
@@ -89,7 +99,7 @@ if not Iq.check_connect():
     exit()
 
 print("✅ Conectado a IQ Option")
-send_telegram("🤖 BOT INICIADO")
+send_telegram("🤖 BOT INICIADO CORRECTAMENTE")
 
 # ==============================
 # LOOP PRINCIPAL
@@ -103,8 +113,8 @@ while True:
             continue
 
         if operations_count >= MAX_OPERATIONS:
-            send_telegram("🏁 Límite de operaciones alcanzado")
-            print("⛔ Bot detenido por límite")
+            print("⛔ Límite alcanzado")
+            send_telegram("🏁 Se alcanzó el límite de operaciones")
             while True:
                 time.sleep(60)
 
@@ -115,37 +125,32 @@ while True:
                 if not candles:
                     continue
 
-                df = []
-                for c in candles:
-                    df.append({
-                        "open": c["open"],
-                        "close": c["close"],
-                        "max": c["max"],
-                        "min": c["min"]
-                    })
-
-                import pandas as pd
-                df = pd.DataFrame(df)
+                df = pd.DataFrame([{
+                    "open": c["open"],
+                    "close": c["close"],
+                    "max": c["max"],
+                    "min": c["min"]
+                } for c in candles])
 
                 current_time = candles[-1]["from"]
 
-                # 🔥 Solo operar nueva vela
+                # SOLO nueva vela
                 if pair in last_candle_time and last_candle_time[pair] == current_time:
                     continue
 
                 last_candle_time[pair] = current_time
 
-                print(f"📊 {pair} nueva vela analizada")
+                print(f"📊 Nueva vela → {pair}")
 
                 direccion, patron, score = pro_signal(df, aggressive=True)
 
                 if direccion is None:
                     continue
 
-                # 🔥 INVERTIR SEÑALES
+                # 🔥 INVERTIR SEÑAL
                 direccion = "put" if direccion == "call" else "call"
 
-                print(f"🔥 SEÑAL {pair} → {direccion.upper()} | score: {score}")
+                print(f"🔥 SEÑAL {pair}: {direccion.upper()} | score {score}")
 
                 send_telegram(
                     f"📊 {pair}\n"
@@ -162,11 +167,7 @@ while True:
                     operations_count += 1
 
                     print("✅ Operación abierta")
-
-                    send_telegram(
-                        f"🚀 OPERACIÓN ABIERTA\n"
-                        f"{pair} → {direccion.upper()}"
-                    )
+                    send_telegram(f"🚀 OPERACIÓN ABIERTA\n{pair} → {direccion.upper()}")
 
                     time.sleep(EXPIRATION * 60)
 
