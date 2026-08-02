@@ -21,7 +21,7 @@ def update_result(result):
 
 
 # ==============================
-# 📊 ESTRUCTURA (TENDENCIA)
+# 📊 ESTRUCTURA 5M
 # ==============================
 def estructura_tendencia(df):
     ultimas = df.tail(6)
@@ -29,12 +29,10 @@ def estructura_tendencia(df):
     maximos = list(ultimas["max"])
     minimos = list(ultimas["min"])
 
-    # tendencia alcista
     if all(maximos[i] > maximos[i-1] for i in range(1, len(maximos))) and \
        all(minimos[i] > minimos[i-1] for i in range(1, len(minimos))):
         return "alcista"
 
-    # tendencia bajista
     if all(maximos[i] < maximos[i-1] for i in range(1, len(maximos))) and \
        all(minimos[i] < minimos[i-1] for i in range(1, len(minimos))):
         return "bajista"
@@ -43,7 +41,7 @@ def estructura_tendencia(df):
 
 
 # ==============================
-# 💪 VELA DE FUERZA (IMPULSO)
+# 💪 VELA DE IMPULSO 5M
 # ==============================
 def vela_fuerza(v):
     cuerpo = abs(v["close"] - v["open"])
@@ -65,25 +63,6 @@ def vela_fuerza(v):
 
 
 # ==============================
-# 🔥 CONTINUIDAD
-# ==============================
-def continuidad(v_fuerza, v_actual, direccion):
-    if direccion == "call":
-        return (
-            v_actual["close"] > v_actual["open"] and
-            v_actual["close"] > v_fuerza["close"]
-        )
-
-    if direccion == "put":
-        return (
-            v_actual["close"] < v_actual["open"] and
-            v_actual["close"] < v_fuerza["close"]
-        )
-
-    return False
-
-
-# ==============================
 # 🚫 EVITAR IMPULSO TARDÍO
 # ==============================
 def evitar_tarde(df, direccion):
@@ -99,75 +78,114 @@ def evitar_tarde(df, direccion):
 
 
 # ==============================
-# 🚀 SEÑAL PRINCIPAL
+# 🔥 SEÑAL EN 5M (SOLO IMPULSO)
 # ==============================
-def pro_signal(df, aggressive=True):
+def signal_5m(df):
     try:
         if len(df) < 60:
             return None
 
         tendencia = estructura_tendencia(df)
-
         if tendencia is None:
             return None
 
-        v_fuerza = df.iloc[-2]
-        v_actual = df.iloc[-1]
+        v_fuerza = df.iloc[-1]
+
+        if not vela_fuerza(v_fuerza):
+            return None
 
         motivos = []
 
-        # ======================
-        # 📈 CALL
-        # ======================
         if tendencia == "alcista":
+            direccion = "call"
+            motivos.append("Estructura alcista 5M")
 
-            if not vela_fuerza(v_fuerza):
-                return None
+        elif tendencia == "bajista":
+            direccion = "put"
+            motivos.append("Estructura bajista 5M")
 
-            if not continuidad(v_fuerza, v_actual, "call"):
-                return None
+        else:
+            return None
 
-            if not evitar_tarde(df, "call"):
-                return None
+        if not evitar_tarde(df, direccion):
+            return None
 
-            motivos.append("Estructura alcista")
-            motivos.append("Vela de impulso fuerte")
-            motivos.append("Continuidad confirmada")
-            motivos.append("Entrada en impulso")
+        motivos.append("Vela de impulso fuerte 5M")
+        motivos.append("Inicio de impulso (no tardío)")
 
-            return {
-                "direction": "call",
-                "score": 50,
-                "reason": motivos
-            }
-
-        # ======================
-        # 📉 PUT
-        # ======================
-        if tendencia == "bajista":
-
-            if not vela_fuerza(v_fuerza):
-                return None
-
-            if not continuidad(v_fuerza, v_actual, "put"):
-                return None
-
-            if not evitar_tarde(df, "put"):
-                return None
-
-            motivos.append("Estructura bajista")
-            motivos.append("Vela de impulso fuerte")
-            motivos.append("Continuidad confirmada")
-            motivos.append("Entrada en impulso")
-
-            return {
-                "direction": "put",
-                "score": 50,
-                "reason": motivos
-            }
-
-        return None
+        return {
+            "direction": direccion,
+            "score": 50,
+            "reason": motivos
+        }
 
     except Exception as e:
-        print("❌ ERROR estrategia:", e)
+        print("❌ ERROR 5M:", e)
         return None
+
+
+# ==============================
+# 🎯 CONFIRMACIÓN 1M (SNIPER)
+# ==============================
+def confirmacion_1m(df):
+    v1 = df.iloc[-3]
+    v2 = df.iloc[-2]
+    v3 = df.iloc[-1]
+
+    def fuerza(v):
+        cuerpo = abs(v["close"] - v["open"])
+        rango = v["max"] - v["min"]
+        if rango == 0:
+            return 0
+        return cuerpo / rango
+
+    def sin_mecha(v):
+        cuerpo = abs(v["close"] - v["open"])
+        mecha_sup = v["max"] - max(v["close"], v["open"])
+        mecha_inf = min(v["close"], v["open"]) - v["min"]
+
+        return mecha_sup < cuerpo * 0.5 and mecha_inf < cuerpo * 0.5
+
+    # ======================
+    # 📈 CALL
+    # ======================
+    if v1["close"] < v1["open"]:
+
+        if (
+            v2["close"] > v2["open"] and
+            v3["close"] > v3["open"] and
+
+            fuerza(v2) > 0.6 and
+            fuerza(v3) > 0.7 and
+
+            fuerza(v3) >= fuerza(v2) and
+
+            sin_mecha(v2) and
+            sin_mecha(v3) and
+
+            v3["close"] > v2["close"]
+        ):
+            return "call"
+
+    # ======================
+    # 📉 PUT
+    # ======================
+    if v1["close"] > v1["open"]:
+
+        if (
+            v2["close"] < v2["open"] and
+            v3["close"] < v3["open"] and
+
+            fuerza(v2) > 0.6 and
+            fuerza(v3) > 0.7 and
+
+            fuerza(v3) >= fuerza(v2) and
+
+            sin_mecha(v2) and
+            sin_mecha(v3) and
+
+            v3["close"] < v2["close"]
+        ):
+            return "put"
+
+    return None
