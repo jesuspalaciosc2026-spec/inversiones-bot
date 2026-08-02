@@ -14,11 +14,11 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 # ⚙ CONFIGURACIÓN
 # =========================
 PAIR = "EURUSD-OTC"   # puedes cambiarlo
-AMOUNT = 1000            # monto de entrada
-EXPIRATION = 1        # 1 minuto (tu preferido)
+AMOUNT = 2000            # monto por operación
+EXPIRATION = 1        # 1 minuto
 
 # =========================
-# 🔌 CONEXIÓN IQ OPTION
+# 🔌 CONEXIÓN
 # =========================
 Iq = IQ_Option(EMAIL, PASSWORD)
 Iq.connect()
@@ -27,10 +27,10 @@ if not Iq.check_connect():
     print("❌ Error conectando a IQ Option")
     exit()
 else:
-    print("✅ Conectado a IQ Option")
+    print("✅ Conectado correctamente")
 
 # =========================
-# 🧠 CONTROL DE OPERACIONES
+# 🧠 CONTROL
 # =========================
 trade_open = False
 last_candle_time = None
@@ -59,15 +59,22 @@ while True:
     try:
         df = get_candles()
 
+        if df is None or len(df) == 0:
+            time.sleep(2)
+            continue
+
         current_time = df["from"].iloc[-1]
 
-        # evitar repetir vela
+        # evitar repetir la misma vela
         if last_candle_time == current_time:
             time.sleep(1)
             continue
 
         last_candle_time = current_time
 
+        # =========================
+        # 📊 GENERAR SEÑAL
+        # =========================
         signal = generate_signal(df)
 
         if signal and not trade_open:
@@ -75,15 +82,17 @@ while True:
             direction = signal["direction"]
             score = signal["score"]
 
-            print(f"\n📊 SEÑAL DETECTADA")
+            print("\n📊 NUEVA SEÑAL DETECTADA")
             print(f"👉 Dirección: {direction}")
             print(f"⭐ Score: {score}")
 
-            # ejecutar operación
+            # =========================
+            # 🚀 EJECUTAR OPERACIÓN
+            # =========================
             check, trade_id = Iq.buy(AMOUNT, PAIR, direction, EXPIRATION)
 
             if check:
-                print("✅ OPERACIÓN EJECUTADA")
+                print("✅ OPERACIÓN ABIERTA")
 
                 trade_open = True
 
@@ -91,13 +100,16 @@ while True:
                 time.sleep(EXPIRATION * 60)
 
                 trade_open = False
-                print("⏳ Esperando nueva oportunidad...\n")
+                print("⏳ Esperando siguiente oportunidad...\n")
 
             else:
                 print("❌ Error al ejecutar operación")
 
+        # =========================
+        # ⏱ PAUSA
+        # =========================
         time.sleep(2)
 
     except Exception as e:
-        print("⚠ ERROR:", e)
+        print("⚠ ERROR GENERAL:", e)
         time.sleep(5)
