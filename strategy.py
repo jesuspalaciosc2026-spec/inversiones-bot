@@ -1,62 +1,173 @@
-import pandas as pd
+import numpy as np
 
-def is_lateral(df):
-    last=df.tail(20)
-    return (last["high"].max()-last["low"].min())<0.002
-
-def ruptura_lateral(df):
-    last,prev=df.iloc[-1],df.iloc[-2]
-    cuerpo=abs(last["close"]-last["open"]); rango=last["high"]-last["low"]
-    if cuerpo>rango*0.6:
-        if last["close"]>prev["high"]: return "call"
-        if last["close"]<prev["low"]: return "put"
-    return None
-
-def zona_repetida(df):
-    p=df["close"].iloc[-1]
-    return sum(abs(df["close"].iloc[i]-p)<0.0003 for i in range(-15,-1))>=3
-
-def vela_limpia(df):
-    c=df.iloc[-1]
-    cuerpo=abs(c["close"]-c["open"])
-    return (c["high"]-max(c["open"],c["close"])<=cuerpo and
-            min(c["open"],c["close"])-c["low"]<=cuerpo)
-
-def continuidad(df,d):
-    a,b=df.iloc[-2],df.iloc[-3]
-    return (a["close"]>a["open"] or b["close"]>b["open"]) if d=="call" else (a["close"]<a["open"] or b["close"]<b["open"])
-
-def tendencia_alcista(df):
-    h,l=df["high"].tail(5).values,df["low"].tail(5).values
-    return h[0]<h[-1] and l[0]<l[-1]
-
-def tendencia_bajista(df):
-    h,l=df["high"].tail(5).values,df["low"].tail(5).values
-    return h[0]>h[-1] and l[0]>l[-1]
-
-def pullback_alcista(df): return sum(v["close"]>v["open"] for _,v in df.tail(4).iterrows())>=2
-def pullback_bajista(df): return sum(v["close"]<v["open"] for _,v in df.tail(4).iterrows())>=2
-def vela_fuerte_alcista(df):
-    c=df.iloc[-1]; cuerpo=abs(c["close"]-c["open"]);r=c["high"]-c["low"]; return c["close"]>c["open"] and cuerpo>r*0.6
-def vela_fuerte_bajista(df):
-    c=df.iloc[-1]; cuerpo=abs(c["close"]-c["open"]);r=c["high"]-c["low"]; return c["close"]<c["open"] and cuerpo>r*0.6
-
-def generate_signal(df):
-    if len(df)<30:return None
-    if tendencia_bajista(df) and pullback_alcista(df) and vela_fuerte_bajista(df):
-        return {"direction":"put","score":4}
-    if tendencia_alcista(df) and pullback_bajista(df) and vela_fuerte_alcista(df):
-        return {"direction":"call","score":4}
-    if not is_lateral(df): return None
-    d=ruptura_lateral(df)
-    if not d or zona_repetida(df) or not continuidad(df,d): return None
-    s=5 if vela_limpia(df) else 4
-    return {"direction":d,"score":s}
-
-def pro_signal(df, aggressive=False):
-    s=generate_signal(df)
-    if s is None: return None,None,0
-    return s["direction"],"CONTINUACION",s["score"]
+# ==============================
+# RESULTADOS
+# ==============================
+wins = 0
+losses = 0
 
 def update_result(result):
-    print(f"Resultado operación: {result}")
+    global wins, losses
+
+    if result > 0:
+        wins += 1
+    else:
+        losses += 1
+
+    print(f"📊 WIN: {wins} | LOSS: {losses}")
+
+
+# ==============================
+# ANALIZAR VELA
+# ==============================
+def analizar_vela(df):
+    vela = df.iloc[-1]
+
+    cuerpo = abs(vela["close"] - vela["open"])
+    rango = vela["max"] - vela["min"]
+
+    if rango == 0:
+        return None
+
+    fuerza = cuerpo / rango
+
+    # Evitar indecisión
+    if fuerza < 0.5:
+        return None
+
+    if vela["close"] > vela["open"]:
+        return "call"
+
+    elif vela["close"] < vela["open"]:
+        return "put"
+
+    return None
+
+
+# ==============================
+# FILTRO IMPULSO (NO ENTRAR TARDE)
+# ==============================
+def filtro_impulso(df):
+    ultimas = df.tail(6)
+
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
+
+    if alcistas >= 4 or bajistas >= 4:
+        return False
+
+    return True
+
+
+# ==============================
+# FILTRO ZONA (REVERSIÓN)
+# ==============================
+def filtro_zona(df):
+    precio = df["close"].iloc[-1]
+
+    max_60 = df["max"].tail(60).max()
+    min_60 = df["min"].tail(60).min()
+
+    if abs(precio - max_60) < (max_60 * 0.0002):
+        return False
+
+    if abs(precio - min_60) < (min_60 * 0.0002):
+        return False
+
+    return True
+
+
+# ==============================
+# FILTRO CONTINUIDAD
+# ==============================
+def filtro_continuidad(df, direccion):
+    ultimas = df.tail(4)
+
+    if direccion == "call":
+        if sum(ultimas["close"] > ultimas["open"]) < 2:
+            return False
+
+    if direccion == "put":
+        if sum(ultimas["close"] < ultimas["open"]) < 2:
+            return False
+
+    return True
+
+
+# ==============================
+# FILTRO AGOTAMIENTO
+# ==============================
+def filtro_agotamiento(df):
+    vela = df.iloc[-1]
+
+    cuerpo = abs(vela["close"] - vela["open"])
+    rango = vela["max"] - vela["min"]
+
+    if rango == 0:
+        return False
+
+    if cuerpo < (rango * 0.4):
+        return False
+
+    return True
+
+
+# ==============================
+# 🔥 FILTRO CONTRA TENDENCIA (NUEVO)
+# ==============================
+def filtro_contra_tendencia(df, direccion):
+    ultimas = df.tail(10)
+
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
+
+    # Si venía bajista fuerte → NO CALL
+    if bajistas >= 6 and direccion == "call":
+        return False
+
+    # Si venía alcista fuerte → NO PUT
+    if alcistas >= 6 and direccion == "put":
+        return False
+
+    return True
+
+
+# ==============================
+# SEÑAL PRINCIPAL
+# ==============================
+def pro_signal(df, aggressive=True):
+    try:
+        if len(df) < 60:
+            return None, None, 0
+
+        # 1. Dirección de vela
+        direccion = analizar_vela(df)
+
+        if direccion is None:
+            return None, None, 0
+
+        # 2. Filtros
+        if not filtro_impulso(df):
+            return None, None, 0
+
+        if not filtro_zona(df):
+            return None, None, 0
+
+        if not filtro_continuidad(df, direccion):
+            return None, None, 0
+
+        if not filtro_agotamiento(df):
+            return None, None, 0
+
+        if not filtro_contra_tendencia(df, direccion):
+            return None, None, 0
+
+        # 3. Score
+        score = 30
+        patron = "continuidad"
+
+        return direccion, patron, score
+
+    except Exception as e:
+        print("❌ ERROR estrategia:", e)
+        return None, None, 0
