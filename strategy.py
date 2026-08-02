@@ -43,7 +43,7 @@ def analizar_vela(df):
 
 
 # ==============================
-# FILTROS
+# FILTRO IMPULSO
 # ==============================
 def filtro_impulso(df):
     ultimas = df.tail(6)
@@ -54,6 +54,9 @@ def filtro_impulso(df):
     return not (alcistas >= 4 or bajistas >= 4)
 
 
+# ==============================
+# FILTRO ZONA
+# ==============================
 def filtro_zona(df):
     precio = df["close"].iloc[-1]
 
@@ -69,6 +72,9 @@ def filtro_zona(df):
     return True
 
 
+# ==============================
+# CONTINUIDAD
+# ==============================
 def filtro_continuidad(df, direccion):
     ultimas = df.tail(4)
 
@@ -81,6 +87,9 @@ def filtro_continuidad(df, direccion):
     return False
 
 
+# ==============================
+# AGOTAMIENTO
+# ==============================
 def filtro_agotamiento(df):
     vela = df.iloc[-1]
 
@@ -93,6 +102,9 @@ def filtro_agotamiento(df):
     return cuerpo >= (rango * 0.4)
 
 
+# ==============================
+# CONTRA TENDENCIA
+# ==============================
 def filtro_contra_tendencia(df, direccion):
     ultimas = df.tail(10)
 
@@ -109,7 +121,56 @@ def filtro_contra_tendencia(df, direccion):
 
 
 # ==============================
-# 🔥 SEÑAL CORREGIDA
+# 🔥 DETECCIÓN DE MANIPULACIÓN
+# ==============================
+def detectar_manipulacion(df):
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    if last["max"] > prev["max"] and last["close"] < prev["max"]:
+        return "put"
+
+    if last["min"] < prev["min"] and last["close"] > prev["min"]:
+        return "call"
+
+    return None
+
+
+# ==============================
+# ⚡ FILTRO VELOCIDAD
+# ==============================
+def filtro_velocidad(df):
+    rango = (df["max"] - df["min"]).tail(10).mean()
+    return rango > 0.0003
+
+
+# ==============================
+# 🚫 MICRO RANGO
+# ==============================
+def micro_rango(df):
+    ultimas = df.tail(5)
+    rango = ultimas["max"].max() - ultimas["min"].min()
+    return rango < 0.0005
+
+
+# ==============================
+# 💪 CONFIRMACIÓN FUERZA
+# ==============================
+def confirmacion_fuerza(df, direccion):
+    last = df.iloc[-1]
+
+    cuerpo = abs(last["close"] - last["open"])
+    rango = last["max"] - last["min"]
+
+    if rango == 0:
+        return False
+
+    fuerza = cuerpo / rango
+    return fuerza > 0.6
+
+
+# ==============================
+# 🚀 SEÑAL FINAL
 # ==============================
 def pro_signal(df, aggressive=True):
     try:
@@ -119,6 +180,17 @@ def pro_signal(df, aggressive=True):
         direccion = analizar_vela(df)
 
         if direccion is None:
+            return None
+
+        # 🔥 Manipulación primero
+        trap = detectar_manipulacion(df)
+        if trap:
+            direccion = trap
+
+        if not filtro_velocidad(df):
+            return None
+
+        if micro_rango(df):
             return None
 
         if not filtro_impulso(df):
@@ -136,9 +208,11 @@ def pro_signal(df, aggressive=True):
         if not filtro_contra_tendencia(df, direccion):
             return None
 
-        score = 30
+        if not confirmacion_fuerza(df, direccion):
+            return None
 
-        # 🔥 RETORNO CORRECTO (SIN TUPLE)
+        score = 40
+
         return {
             "direction": direccion,
             "score": score
