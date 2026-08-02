@@ -6,7 +6,7 @@ from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal, update_result
 
 # ==============================
-# CONFIG
+# CONFIGURACIÓN
 # ==============================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
@@ -14,11 +14,16 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-PAIRS = ["EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC", "EURJPY-OTC"]
+PAIRS = [
+    "EURUSD-OTC",
+    "GBPUSD-OTC",
+    "USDCHF-OTC",
+    "EURJPY-OTC"
+]
 
 AMOUNT = 3333
 EXPIRATION = 1
-MAX_OPERATIONS = 15
+MAX_OPERATIONS = 4  # 🔥 SOLO 4 OPERACIONES
 
 bot_active = True
 operations_count = 0
@@ -31,15 +36,18 @@ last_update_id = None
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-    except:
-        pass
+        requests.post(url, data={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": msg
+        })
+    except Exception as e:
+        print(f"❌ Error Telegram: {e}")
 
 # ==============================
-# COMANDOS
+# COMANDOS TELEGRAM
 # ==============================
 def check_telegram_commands():
-    global bot_active, last_update_id
+    global bot_active, last_update_id, operations_count
 
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
@@ -49,10 +57,10 @@ def check_telegram_commands():
             return
 
         for update in resp.get("result", []):
-            uid = update["update_id"]
+            update_id = update["update_id"]
 
-            if last_update_id is None or uid > last_update_id:
-                last_update_id = uid
+            if last_update_id is None or update_id > last_update_id:
+                last_update_id = update_id
 
                 if "message" in update:
                     text = update["message"].get("text", "")
@@ -63,12 +71,14 @@ def check_telegram_commands():
 
                     elif text == "/start":
                         bot_active = True
-                        send_telegram("✅ BOT ACTIVADO")
-    except:
-        pass
+                        operations_count = 0  # 🔥 reinicia contador
+                        send_telegram("✅ BOT REINICIADO")
+
+    except Exception as e:
+        print("❌ Error Telegram:", e)
 
 # ==============================
-# 🧠 CONFIRMACIÓN FINAL (CLAVE 🔥)
+# 🎯 SNIPER PRO (confirmación final)
 # ==============================
 def confirmacion_final(df, direccion):
     last = df.iloc[-1]
@@ -81,27 +91,22 @@ def confirmacion_final(df, direccion):
 
     return False
 
-# ==============================
-# 🎯 ESPERA + VALIDACIÓN SNIPER
-# ==============================
 def esperar_y_confirmar(df, direccion):
     while True:
         segundos = time.time() % 60
 
-        # últimos 3 segundos
-        if segundos >= 57:
-
+        if segundos >= 57:  # últimos segundos
             if confirmacion_final(df, direccion):
                 print("✅ Confirmación final OK")
                 return True
             else:
-                print("❌ Cancelada por cambio de vela")
+                print("❌ Entrada cancelada")
                 return False
 
         time.sleep(0.1)
 
 # ==============================
-# CONEXIÓN
+# CONEXIÓN IQ OPTION
 # ==============================
 print("🔌 Conectando...")
 Iq = IQ_Option(EMAIL, PASSWORD)
@@ -112,10 +117,10 @@ if not Iq.check_connect():
     exit()
 
 print("✅ Conectado")
-send_telegram("🤖 SNIPER PRO MAX ACTIVADO")
+send_telegram("🤖 BOT SNIPER ACTIVADO")
 
 # ==============================
-# LOOP
+# LOOP PRINCIPAL
 # ==============================
 while True:
     try:
@@ -125,10 +130,11 @@ while True:
             time.sleep(2)
             continue
 
+        # 🔥 LIMITE DE OPERACIONES
         if operations_count >= MAX_OPERATIONS:
-            send_telegram("🏁 Límite alcanzado")
-            while True:
-                time.sleep(60)
+            bot_active = False
+            send_telegram("🏁 Límite de 3 operaciones alcanzado. Bot detenido.")
+            continue
 
         for pair in PAIRS:
             try:
@@ -146,6 +152,7 @@ while True:
 
                 current_time = candles[-1]["from"]
 
+                # evitar repetir vela
                 if pair in last_candle_time and last_candle_time[pair] == current_time:
                     continue
 
@@ -166,12 +173,16 @@ while True:
 
                 print(f"🔥 {pair} → {direccion} | score {score}")
 
-                send_telegram(f"{pair} → {direccion.upper()} | score {score}")
+                send_telegram(
+                    f"📊 {pair}\n"
+                    f"Señal: {direccion.upper()}\n"
+                    f"Score: {score}"
+                )
 
                 # ==============================
                 # 🎯 SNIPER PRO
                 # ==============================
-                print("⏳ Esperando confirmación final...")
+                print("⏳ Esperando confirmación...")
 
                 if not esperar_y_confirmar(df, direccion):
                     continue
@@ -192,6 +203,9 @@ while True:
                     update_result(result)
 
                     send_telegram(f"📈 Resultado: {result}")
+
+                else:
+                    print("❌ Error operación")
 
             except Exception as e:
                 print(f"❌ Error en {pair}: {e}")
