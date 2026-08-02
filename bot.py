@@ -28,11 +28,11 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # 🔥 SOLO OTC
 PAIRS = ["EURUSD-OTC", "GBPUSD-OTC", "USDCHF-OTC"]
 
-AMOUNT = 200
+AMOUNT = 300
 EXPIRATION = 1
 
 # 🔥 LIMITE
-max_trades = 9
+max_trades = 90
 trade_count = 0
 
 # 🔥 INVERTIR SEÑALES
@@ -150,7 +150,7 @@ def trade(pair, direction):
         if trade_count >= max_trades:
             bot_active = False
             log("🛑 LIMITE DE OPERACIONES ALCANZADO")
-            send("🛑 Se alcanzaron 9 operaciones")
+            send("🛑 Se alcanzaron 90 operaciones")
             return
 
         log(f"🚀 {pair} {direction.upper()}")
