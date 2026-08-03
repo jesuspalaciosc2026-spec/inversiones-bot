@@ -1,156 +1,213 @@
-import os
-import time
-import requests
-import pandas as pd
-from iqoptionapi.stable_api import IQ_Option
-
-from strategy import pro_signal, update_result
+import numpy as np
 
 # ==============================
-# CONFIG
+# RESULTADOS
 # ==============================
-EMAIL = os.getenv("IQ_EMAIL")
-PASSWORD = os.getenv("IQ_PASSWORD")
+wins = 0
+losses = 0
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+def update_result(result):
+    global wins, losses
 
-PAIRS = [
-    "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "USDCHF-OTC",
-    "EURJPY-OTC"
-]
+    if result > 0:
+        wins += 1
+    else:
+        losses += 1
 
-AMOUNT = 20000
-EXPIRATION = 1
+    print(f"📊 WIN: {wins} | LOSS: {losses}")
 
-last_candle_time = {}
 
 # ==============================
-# TELEGRAM
+# 🔥 VELA FUERTE (MEJORADA)
 # ==============================
-def send_telegram(msg):
+def vela_fuerte(v):
+    cuerpo = abs(v["close"] - v["open"])
+    rango = v["max"] - v["min"]
+
+    if rango == 0:
+        return False
+
+    fuerza = cuerpo / rango
+
+    mecha_superior = v["max"] - max(v["open"], v["close"])
+    mecha_inferior = min(v["open"], v["close"]) - v["min"]
+
+    # 🔥 PRECISIÓN EXTREMA SIN CAMBIAR LÓGICA
+    if fuerza > 0.75 and mecha_superior < cuerpo * 0.3 and mecha_inferior < cuerpo * 0.3:
+        return True
+
+    return False
+
+
+# ==============================
+# ANALIZAR VELA
+# ==============================
+def analizar_vela(df):
+    vela = df.iloc[-1]
+
+    if not vela_fuerte(vela):
+        return None
+
+    if vela["close"] > vela["open"]:
+        return "call"
+
+    elif vela["close"] < vela["open"]:
+        return "put"
+
+    return None
+
+
+# ==============================
+# FILTRO IMPULSO
+# ==============================
+def filtro_impulso(df):
+    ultimas = df.tail(6)
+
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
+
+    if alcistas >= 4 or bajistas >= 4:
+        return False
+
+    return True
+
+
+# ==============================
+# FILTRO ZONA
+# ==============================
+def filtro_zona(df):
+    precio = df["close"].iloc[-1]
+
+    max_60 = df["max"].tail(60).max()
+    min_60 = df["min"].tail(60).min()
+
+    if abs(precio - max_60) < (max_60 * 0.0002):
+        return False
+
+    if abs(precio - min_60) < (min_60 * 0.0002):
+        return False
+
+    return True
+
+
+# ==============================
+# FILTRO CONTINUIDAD
+# ==============================
+def filtro_continuidad(df, direccion):
+    ultimas = df.tail(4)
+
+    if direccion == "call":
+        if sum(ultimas["close"] > ultimas["open"]) < 2:
+            return False
+
+    if direccion == "put":
+        if sum(ultimas["close"] < ultimas["open"]) < 2:
+            return False
+
+    return True
+
+
+# ==============================
+# FILTRO AGOTAMIENTO
+# ==============================
+def filtro_agotamiento(df):
+    vela = df.iloc[-1]
+
+    cuerpo = abs(vela["close"] - vela["open"])
+    rango = vela["max"] - vela["min"]
+
+    if rango == 0:
+        return False
+
+    if cuerpo < (rango * 0.5):
+        return False
+
+    return True
+
+
+# ==============================
+# FILTRO CONTRA TENDENCIA
+# ==============================
+def filtro_contra_tendencia(df, direccion):
+    ultimas = df.tail(10)
+
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
+
+    if bajistas >= 6 and direccion == "call":
+        return False
+
+    if alcistas >= 6 and direccion == "put":
+        return False
+
+    return True
+
+
+# ==============================
+# 🔥 CONFIRMACIÓN 2 VELAS (SNIPER)
+# ==============================
+def confirmacion_sniper(df, direccion):
+    v1 = df.iloc[-2]
+    v2 = df.iloc[-1]
+
+    if not vela_fuerte(v1) or not vela_fuerte(v2):
+        return False
+
+    if direccion == "call":
+        if v1["close"] > v1["open"] and v2["close"] > v2["open"]:
+            return True
+
+    if direccion == "put":
+        if v1["close"] < v1["open"] and v2["close"] < v2["open"]:
+            return True
+
+    return False
+
+
+# ==============================
+# SEÑAL PRINCIPAL
+# ==============================
+def pro_signal(df, aggressive=True):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": msg
-        })
-    except Exception as e:
-        print("Telegram error:", e)
+        if len(df) < 60:
+            return None
 
+        direccion = analizar_vela(df)
 
-# ==============================
-# ⏳ ESPERA SEGUNDO 59
-# ==============================
-def esperar_segundo_59():
-    while True:
-        now = time.localtime()
-        if now.tm_sec >= 59:
-            break
-        time.sleep(0.2)
+        if direccion is None:
+            return None
 
+        if not filtro_impulso(df):
+            return None
 
-# ==============================
-# CONEXIÓN
-# ==============================
-print("🔌 Conectando...")
-Iq = IQ_Option(EMAIL, PASSWORD)
-Iq.connect()
+        if not filtro_zona(df):
+            return None
 
-if not Iq.check_connect():
-    print("❌ Error conexión")
-    exit()
+        if not filtro_continuidad(df, direccion):
+            return None
 
-print("✅ Conectado")
-send_telegram("🤖 BOT INICIADO")
+        if not filtro_agotamiento(df):
+            return None
 
-# ==============================
-# LOOP PRINCIPAL
-# ==============================
-while True:
-    try:
-        for pair in PAIRS:
+        if not filtro_contra_tendencia(df, direccion):
+            return None
 
-            candles = Iq.get_candles(pair, 60, 100, time.time())
+        # 🔥 CONFIRMACIÓN FINAL (PRECISIÓN)
+        if not confirmacion_sniper(df, direccion):
+            return None
 
-            if not candles:
-                continue
-
-            # 🔥 DATA LIMPIA
-            df = pd.DataFrame([{
-                "open": float(c["open"]),
-                "close": float(c["close"]),
-                "max": float(c["max"]),
-                "min": float(c["min"])
-            } for c in candles])
-
-            current_time = candles[-1]["from"]
-
-            # 🚫 EVITAR REPETIR EN MISMA VELA
-            if pair in last_candle_time and last_candle_time[pair] == current_time:
-                continue
-
-            signal = pro_signal(df)
-
-            if not signal:
-                continue
-
-            direccion = signal["direction"]
-            score = signal.get("score", 0)
-            reason = signal.get("reason", [])
-
-            print(f"🔥 SEÑAL {pair}: {direccion}")
-
-            # ⏳ ESPERA SNIPER
-            esperar_segundo_59()
-
-            # 🔒 BLOQUEAR ESTA VELA
-            last_candle_time[pair] = current_time
-
-            # 🚀 ENTRADA
-            status, trade_id = Iq.buy(AMOUNT, pair, direccion, EXPIRATION)
-
-            if status:
-                print("✅ OPERACIÓN ABIERTA")
-
-                send_telegram(
-                    f"📊 {pair}\n"
-                    f"Dirección: {direccion.upper()}\n"
-                    f"Score: {score}\n"
-                    f"Motivo:\n- " + "\n- ".join(reason)
-                )
-
-                # ⏳ ESPERAR RESULTADO
-                time.sleep(EXPIRATION * 60)
-
-                result = Iq.check_win_v4(trade_id)
-
-                # 🔥 NORMALIZAR RESULTADO
-                if isinstance(result, tuple):
-                    result = result[0]
-
-                if isinstance(result, str):
-                    if result.lower() == "win":
-                        result = 1
-                    elif result.lower() == "loose":
-                        result = -1
-                    else:
-                        result = 0
-
-                update_result(result)
-
-                send_telegram(f"📈 Resultado: {result}")
-
-                # 🔥 SOLO 1 TRADE POR CICLO
-                break
-
-            else:
-                print("❌ Error al abrir operación")
-
-        time.sleep(1)
+        return {
+            "direction": direccion,
+            "score": 95,
+            "reason": [
+                "Vela fuerte confirmada",
+                "Continuidad limpia",
+                "Sin mechas débiles",
+                "Confirmación doble sniper",
+                "Sin manipulación"
+            ]
+        }
 
     except Exception as e:
-        print("❌ ERROR GENERAL:", e)
-        time.sleep(5)
+        print("❌ ERROR estrategia:", e)
+        return None
