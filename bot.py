@@ -23,7 +23,7 @@ PAIRS = [
 
 AMOUNT = 20000
 EXPIRATION = 1
-MAX_OPERATIONS = 3   # 🔥 límite que pediste
+MAX_OPERATIONS = 300   # 🔥 límite que pediste
 
 bot_active = True
 operations_count = 0
