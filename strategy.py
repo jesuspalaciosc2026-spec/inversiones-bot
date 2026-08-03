@@ -18,48 +18,45 @@ def update_result(result):
 
 
 # ==============================
-# 🔥 VELA FUERTE (PRECISA)
+# 🧠 INTERPRETACIÓN INTELIGENTE DE VELA
 # ==============================
-def vela_fuerte(v):
-    cuerpo = abs(v["close"] - v["open"])
-    rango = v["max"] - v["min"]
+def interpretar_vela(v):
+    open_ = v["open"]
+    close = v["close"]
+    high = v["max"]
+    low = v["min"]
+
+    cuerpo = abs(close - open_)
+    rango = high - low
 
     if rango == 0:
-        return False
+        return None
 
     fuerza = cuerpo / rango
 
-    mecha_sup = v["max"] - max(v["close"], v["open"])
-    mecha_inf = min(v["close"], v["open"]) - v["min"]
+    mecha_sup = high - max(open_, close)
+    mecha_inf = min(open_, close) - low
 
-    # 🔥 FILTRO DE PRECISIÓN
-    return (
-        fuerza > 0.7 and
-        mecha_sup < cuerpo * 0.3 and
-        mecha_inf < cuerpo * 0.3
-    )
+    # 🔥 FUERZA LIMPIA
+    if fuerza > 0.7 and mecha_sup < cuerpo * 0.3 and mecha_inf < cuerpo * 0.3:
+        if close > open_:
+            return "call_fuerte"
+        else:
+            return "put_fuerte"
 
+    # 🔥 RECHAZO ABAJO
+    if mecha_inf > cuerpo * 1.2:
+        return "rechazo_alcista"
 
-# ==============================
-# 📊 ANALIZAR VELA CERRADA
-# ==============================
-def analizar_cierre(df):
-    vela = df.iloc[-2]  # 🔥 VELA CERRADA REAL
-
-    if not vela_fuerte(vela):
-        return None
-
-    if vela["close"] > vela["open"]:
-        return "call"
-
-    elif vela["close"] < vela["open"]:
-        return "put"
+    # 🔥 RECHAZO ARRIBA
+    if mecha_sup > cuerpo * 1.2:
+        return "rechazo_bajista"
 
     return None
 
 
 # ==============================
-# 🚫 EVITAR MERCADO LATERAL
+# 🚫 MERCADO LIMPIO
 # ==============================
 def mercado_limpio(df):
     ultimas = df.tail(20)
@@ -96,9 +93,28 @@ def pro_signal(df, aggressive=True):
         if not mercado_limpio(df):
             return None
 
-        direccion = analizar_cierre(df)
+        # 🔥 USAR VELA CERRADA
+        vela = df.iloc[-2]
 
-        if direccion is None:
+        tipo = interpretar_vela(vela)
+
+        if tipo is None:
+            return None
+
+        # 🔥 DECISIÓN INTELIGENTE
+        if tipo == "call_fuerte":
+            direccion = "call"
+
+        elif tipo == "put_fuerte":
+            direccion = "put"
+
+        elif tipo == "rechazo_alcista":
+            direccion = "call"
+
+        elif tipo == "rechazo_bajista":
+            direccion = "put"
+
+        else:
             return None
 
         if not evitar_tarde(df, direccion):
@@ -108,10 +124,10 @@ def pro_signal(df, aggressive=True):
             "direction": direccion,
             "score": 95,
             "reason": [
-                "Vela cerrada fuerte",
-                "Confirmación real",
-                "Sin mechas débiles",
-                "Entrada en nueva vela"
+                f"Tipo de vela: {tipo}",
+                "Lectura de recorrido",
+                "Confirmación por cierre",
+                "Sin manipulación evidente"
             ]
         }
 
