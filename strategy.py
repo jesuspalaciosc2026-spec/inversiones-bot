@@ -18,7 +18,7 @@ def update_result(result):
 
 
 # ==============================
-# 🔥 VELA FUERTE (MEJORADA)
+# 🔥 VELA FUERTE (PRECISA)
 # ==============================
 def vela_fuerte(v):
     cuerpo = abs(v["close"] - v["open"])
@@ -29,20 +29,22 @@ def vela_fuerte(v):
 
     fuerza = cuerpo / rango
 
-    mecha_superior = v["max"] - max(v["open"], v["close"])
-    mecha_inferior = min(v["open"], v["close"]) - v["min"]
+    mecha_sup = v["max"] - max(v["close"], v["open"])
+    mecha_inf = min(v["close"], v["open"]) - v["min"]
 
-    if fuerza > 0.7 and mecha_superior < cuerpo * 0.4 and mecha_inferior < cuerpo * 0.4:
-        return True
-
-    return False
+    # 🔥 FILTRO DE PRECISIÓN
+    return (
+        fuerza > 0.7 and
+        mecha_sup < cuerpo * 0.3 and
+        mecha_inf < cuerpo * 0.3
+    )
 
 
 # ==============================
-# ANALIZAR VELA
+# 📊 ANALIZAR VELA CERRADA
 # ==============================
-def analizar_vela(df):
-    vela = df.iloc[-1]
+def analizar_cierre(df):
+    vela = df.iloc[-2]  # 🔥 VELA CERRADA REAL
 
     if not vela_fuerte(vela):
         return None
@@ -57,175 +59,59 @@ def analizar_vela(df):
 
 
 # ==============================
-# FILTRO IMPULSO (MENOS ESTRICTO)
+# 🚫 EVITAR MERCADO LATERAL
 # ==============================
-def filtro_impulso(df):
-    ultimas = df.tail(6)
+def mercado_limpio(df):
+    ultimas = df.tail(20)
 
-    alcistas = sum(ultimas["close"] > ultimas["open"])
-    bajistas = sum(ultimas["close"] < ultimas["open"])
+    rango_total = ultimas["max"].max() - ultimas["min"].min()
+    rango_promedio = (ultimas["max"] - ultimas["min"]).mean()
 
-    # 🔥 antes era 4 → ahora más flexible
-    if alcistas >= 5 or bajistas >= 5:
-        return False
-
-    return True
+    return rango_total > rango_promedio * 3
 
 
 # ==============================
-# FILTRO ZONA
+# 🚫 EVITAR ENTRAR TARDE
 # ==============================
-def filtro_zona(df):
-    precio = df["close"].iloc[-1]
-
-    max_60 = df["max"].tail(60).max()
-    min_60 = df["min"].tail(60).min()
-
-    if abs(precio - max_60) < (max_60 * 0.00015):
-        return False
-
-    if abs(precio - min_60) < (min_60 * 0.00015):
-        return False
-
-    return True
-
-
-# ==============================
-# FILTRO CONTINUIDAD (AJUSTADO)
-# ==============================
-def filtro_continuidad(df, direccion):
-    ultimas = df.tail(3)
+def evitar_tarde(df, direccion):
+    ultimas = df.tail(5)
 
     if direccion == "call":
-        if sum(ultimas["close"] > ultimas["open"]) < 1:
-            return False
+        return sum(ultimas["close"] > ultimas["open"]) < 4
 
     if direccion == "put":
-        if sum(ultimas["close"] < ultimas["open"]) < 1:
-            return False
-
-    return True
-
-
-# ==============================
-# FILTRO AGOTAMIENTO
-# ==============================
-def filtro_agotamiento(df):
-    vela = df.iloc[-1]
-
-    cuerpo = abs(vela["close"] - vela["open"])
-    rango = vela["max"] - vela["min"]
-
-    if rango == 0:
-        return False
-
-    if cuerpo < (rango * 0.4):
-        return False
-
-    return True
-
-
-# ==============================
-# FILTRO CONTRA TENDENCIA
-# ==============================
-def filtro_contra_tendencia(df, direccion):
-    ultimas = df.tail(10)
-
-    alcistas = sum(ultimas["close"] > ultimas["open"])
-    bajistas = sum(ultimas["close"] < ultimas["open"])
-
-    if bajistas >= 7 and direccion == "call":
-        return False
-
-    if alcistas >= 7 and direccion == "put":
-        return False
-
-    return True
-
-
-# ==============================
-# 🔥 CONFIRMACIÓN SNIPER (RÁPIDA)
-# ==============================
-def confirmacion_sniper(df, direccion):
-    v1 = df.iloc[-3]
-    v2 = df.iloc[-2]
-    v3 = df.iloc[-1]  # vela en formación
-
-    if not vela_fuerte(v1):
-        return False
-
-    if not vela_fuerte(v2):
-        return False
-
-    cuerpo_actual = abs(v3["close"] - v3["open"])
-    rango_actual = v3["max"] - v3["min"]
-
-    if rango_actual == 0:
-        return False
-
-    fuerza_actual = cuerpo_actual / rango_actual
-
-    if direccion == "call":
-        if (
-            v1["close"] > v1["open"] and
-            v2["close"] > v2["open"] and
-            v3["close"] > v3["open"] and
-            fuerza_actual > 0.55
-        ):
-            return True
-
-    if direccion == "put":
-        if (
-            v1["close"] < v1["open"] and
-            v2["close"] < v2["open"] and
-            v3["close"] < v3["open"] and
-            fuerza_actual > 0.55
-        ):
-            return True
+        return sum(ultimas["close"] < ultimas["open"]) < 4
 
     return False
 
 
 # ==============================
-# SEÑAL PRINCIPAL
+# 🚀 SEÑAL PRINCIPAL
 # ==============================
 def pro_signal(df, aggressive=True):
     try:
         if len(df) < 60:
             return None
 
-        direccion = analizar_vela(df)
+        if not mercado_limpio(df):
+            return None
+
+        direccion = analizar_cierre(df)
 
         if direccion is None:
             return None
 
-        if not filtro_impulso(df):
-            return None
-
-        if not filtro_zona(df):
-            return None
-
-        if not filtro_continuidad(df, direccion):
-            return None
-
-        if not filtro_agotamiento(df):
-            return None
-
-        if not filtro_contra_tendencia(df, direccion):
-            return None
-
-        # 🔥 AQUÍ ESTÁ LA CLAVE
-        if not confirmacion_sniper(df, direccion):
+        if not evitar_tarde(df, direccion):
             return None
 
         return {
             "direction": direccion,
-            "score": 90,
+            "score": 95,
             "reason": [
-                "Impulso confirmado",
-                "Entrada anticipada",
-                "Continuidad real",
-                "Sniper activado"
+                "Vela cerrada fuerte",
+                "Confirmación real",
+                "Sin mechas débiles",
+                "Entrada en nueva vela"
             ]
         }
 
