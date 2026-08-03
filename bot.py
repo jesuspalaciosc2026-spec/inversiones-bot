@@ -6,7 +6,7 @@ from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal, update_result
 
 # ==============================
-# CONFIGURACIÓN
+# CONFIG
 # ==============================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
@@ -14,19 +14,16 @@ PASSWORD = os.getenv("IQ_PASSWORD")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-PAIRS = [
-    "EURUSD-OTC",
-]
+PAIR = "EURUSD-OTC"
 
 AMOUNT = 20000
-EXPIRATION = 1
-MAX_OPERATIONS = 300
+EXPIRATION = 1  # 1 minuto
 
-bot_active = True
-operations_count = 0
-last_candle_time = {}
-last_update_id = None
-
+# ==============================
+# VARIABLES
+# ==============================
+last_candle_time = None
+pending_signal = None
 
 # ==============================
 # TELEGRAM
@@ -38,45 +35,14 @@ def send_telegram(msg):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": msg
         })
-    except Exception as e:
-        print(f"❌ Error Telegram: {e}", flush=True)
-
-
-# ==============================
-# COMANDOS TELEGRAM
-# ==============================
-def check_telegram_commands():
-    global bot_active, last_update_id
-
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-        r = requests.get(url).json()
-
-        for update in r.get("result", []):
-            update_id = update["update_id"]
-
-            if last_update_id is None or update_id > last_update_id:
-                last_update_id = update_id
-
-                if "message" in update:
-                    text = update["message"].get("text", "")
-
-                    if text == "/stop":
-                        bot_active = False
-                        send_telegram("⛔ BOT DETENIDO")
-
-                    elif text == "/start":
-                        bot_active = True
-                        send_telegram("✅ BOT ACTIVADO")
-
-    except Exception as e:
-        print("❌ Error comandos Telegram:", e, flush=True)
-
+    except:
+        pass
 
 # ==============================
-# CONEXIÓN IQ OPTION
+# CONEXIÓN
 # ==============================
 print("🔌 Conectando a IQ Option...", flush=True)
+
 Iq = IQ_Option(EMAIL, PASSWORD)
 Iq.connect()
 
@@ -85,103 +51,58 @@ if not Iq.check_connect():
     exit()
 
 print("✅ Conectado", flush=True)
-send_telegram("🤖 BOT INICIADO")
-
+send_telegram("🤖 BOT SNIPER ACTIVADO")
 
 # ==============================
-# LOOP PRINCIPAL
+# LOOP
 # ==============================
 while True:
     try:
-        print("🟢 BOT ACTIVO...", flush=True)
+        candles = Iq.get_candles(PAIR, 60, 100, time.time())
 
-        check_telegram_commands()
-
-        if not bot_active:
-            time.sleep(2)
+        if not candles:
+            time.sleep(1)
             continue
 
-        if operations_count >= MAX_OPERATIONS:
-            print("⛔ Límite alcanzado...", flush=True)
-            time.sleep(5)
-            continue
+        df = pd.DataFrame([{
+            "open": c["open"],
+            "close": c["close"],
+            "max": c["max"],
+            "min": c["min"]
+        } for c in candles])
 
-        for pair in PAIRS:
-            try:
-                print(f"\n📊 Analizando {pair}", flush=True)
+        current_time = candles[-1]["from"]
 
-                candles = Iq.get_candles(pair, 60, 100, time.time())
+        # ==============================
+        # NUEVA VELA DETECTADA
+        # ==============================
+        if last_candle_time != current_time:
 
-                if not candles:
-                    continue
+            print("🟢 Nueva vela", flush=True)
 
-                df = pd.DataFrame([{
-                    "open": c["open"],
-                    "close": c["close"],
-                    "max": c["max"],
-                    "min": c["min"]
-                } for c in candles])
+            # ==============================
+            # EJECUTAR SEÑAL PENDIENTE
+            # ==============================
+            if pending_signal is not None:
 
-                # 🔥 USAR VELA CERRADA REAL
-                current_time = candles[-2]["from"]
+                direccion = pending_signal["direction"]
 
-                if pair in last_candle_time and last_candle_time[pair] == current_time:
-                    continue
+                print(f"🚀 ENTRADA SNIPER → {direccion}", flush=True)
 
-                last_candle_time[pair] = current_time
-
-                print("🧠 Buscando señal...", flush=True)
-
-                signal = pro_signal(df)
-
-                # ==============================
-                # VALIDACIONES (ANTI ERRORES)
-                # ==============================
-                if signal is None:
-                    continue
-
-                if not isinstance(signal, tuple):
-                    continue
-
-                direccion, patron, score = signal
-
-                if direccion is None:
-                    continue
-
-                # ==============================
-                # LOG SEÑAL
-                # ==============================
-                print(f"🔥 SEÑAL {pair}: {direccion.upper()}", flush=True)
-
-                send_telegram(
-                    f"📊 {pair}\n"
-                    f"Señal: {direccion.upper()}\n"
-                    f"Score: {score}\n"
-                    f"Patrón: {patron}"
-                )
-
-                # ==============================
-                # EJECUCIÓN
-                # ==============================
-                print("🚀 Ejecutando operación...", flush=True)
-
-                status, trade_id = Iq.buy(AMOUNT, pair, direccion, EXPIRATION)
+                status, trade_id = Iq.buy(AMOUNT, PAIR, direccion, EXPIRATION)
 
                 if status:
-                    operations_count += 1
-
-                    print("✅ OPERACIÓN ABIERTA", flush=True)
-
                     send_telegram(
-                        f"🚀 OPERACIÓN ABIERTA\n"
-                        f"{pair} → {direccion.upper()}"
+                        f"🚀 SNIPER ENTRY\n"
+                        f"{PAIR} → {direccion.upper()}"
                     )
 
+                    # esperar resultado
                     time.sleep(EXPIRATION * 60)
 
                     result = Iq.check_win_v4(trade_id)
 
-                    # 🔥 FIX RESULTADO
+                    # FIX errores tuple/string
                     if isinstance(result, tuple):
                         result = result[0]
 
@@ -196,14 +117,46 @@ while True:
                     send_telegram(f"📈 Resultado: {result}")
 
                 else:
-                    print("❌ No se pudo abrir operación", flush=True)
+                    print("❌ No ejecutó operación", flush=True)
 
-            except Exception as e:
-                print(f"❌ Error en {pair}: {e}", flush=True)
+                # limpiar señal
+                pending_signal = None
 
-        # 🔥 MENOS SPAM + MÁS ESTABLE
-        time.sleep(3)
+            # ==============================
+            # ANALIZAR VELA QUE CERRÓ
+            # ==============================
+            signal = pro_signal(df)
+
+            if signal is not None:
+
+                direccion = signal.get("direction")
+
+                # 🔥 PROTECCIÓN ERROR None.upper()
+                if direccion is None:
+                    last_candle_time = current_time
+                    continue
+
+                score = signal.get("score", 0)
+                reason = signal.get("reason", [])
+
+                print(f"🔥 Señal detectada → {direccion}", flush=True)
+
+                # GUARDAR PARA SIGUIENTE VELA
+                pending_signal = signal
+
+                send_telegram(
+                    f"📊 SEÑAL DETECTADA\n"
+                    f"{PAIR}\n"
+                    f"{direccion.upper()}\n"
+                    f"Score: {score}\n"
+                    f"Entrada en próxima vela"
+                )
+
+            last_candle_time = current_time
+
+        # velocidad optimizada
+        time.sleep(0.3)
 
     except Exception as e:
-        print("❌ ERROR GENERAL:", e, flush=True)
-        time.sleep(5)
+        print(f"❌ ERROR GENERAL: {e}", flush=True)
+        time.sleep(2)
