@@ -21,7 +21,7 @@ def update_result(result):
 
 
 # ==============================
-# ANALIZAR VELA (COMPLETA)
+# ANALIZAR VELA
 # ==============================
 def analizar_vela(vela):
     open_ = vela["open"]
@@ -37,21 +37,21 @@ def analizar_vela(vela):
 
     fuerza = cuerpo / rango
 
-    mecha_arriba = high - max(open_, close)
-    mecha_abajo = min(open_, close) - low
-
     return {
         "alcista": close > open_,
         "bajista": close < open_,
+        "cuerpo": cuerpo,
+        "rango": rango,
         "fuerza": fuerza,
-        "mecha_arriba": mecha_arriba,
-        "mecha_abajo": mecha_abajo,
-        "rango": rango
+        "open": open_,
+        "close": close,
+        "high": high,
+        "low": low
     }
 
 
 # ==============================
-# TENDENCIA
+# DETECTAR TENDENCIA
 # ==============================
 def detectar_tendencia(df):
     ultimas = df.tail(5)
@@ -72,43 +72,58 @@ def detectar_tendencia(df):
 
 
 # ==============================
-# FILTRO FUERZA REAL
+# FILTRO DE FUERZA REAL
 # ==============================
 def es_fuerza_real(info):
     if info is None:
         return False
 
-    # cuerpo dominante
+    # 🔥 cuerpo dominante (evita velas débiles)
     if info["fuerza"] < 0.6:
-        return False
-
-    # evitar rechazo fuerte
-    if info["alcista"] and info["mecha_abajo"] > info["rango"] * 0.4:
-        return False
-
-    if info["bajista"] and info["mecha_arriba"] > info["rango"] * 0.4:
         return False
 
     return True
 
 
 # ==============================
-# CONTINUIDAD LIMPIA
+# FILTRO CONTINUIDAD LIMPIA
 # ==============================
 def es_continuidad(info, direccion):
     if info is None:
         return False
 
+    # 🔥 continuidad fuerte
     if info["fuerza"] < 0.5:
         return False
 
     if direccion == "call":
-        return info["alcista"]
+        if not info["alcista"]:
+            return False
 
     if direccion == "put":
-        return info["bajista"]
+        if not info["bajista"]:
+            return False
 
-    return False
+    return True
+
+
+# ==============================
+# FILTRO ANTI-RETROCESO (CLAVE)
+# ==============================
+def evitar_retroceso(info_confirm, direccion):
+
+    # ❌ Evita entrar si la vela cambia dirección
+    if direccion == "call" and info_confirm["close"] <= info_confirm["open"]:
+        return False
+
+    if direccion == "put" and info_confirm["close"] >= info_confirm["open"]:
+        return False
+
+    # ❌ Evita velas con poco cuerpo (indecisión)
+    if info_confirm["fuerza"] < 0.6:
+        return False
+
+    return True
 
 
 # ==============================
@@ -119,9 +134,7 @@ def pro_signal(df):
     if len(df) < 10:
         return None
 
-    # 🔥 IMPORTANTE:
-    # -2 = vela CERRADA (confirmación real)
-    # -3 = vela de impulso
+    # 🔥 USAMOS SOLO VELAS CERRADAS
     vela_fuerza = df.iloc[-3]
     vela_confirm = df.iloc[-2]
 
@@ -140,14 +153,11 @@ def pro_signal(df):
         return None
 
     # ==============================
-    # FILTRO 1: FUERZA
+    # IMPULSO
     # ==============================
     if not es_fuerza_real(info_fuerza):
         return None
 
-    # ==============================
-    # FILTRO 2: DIRECCIÓN CORRECTA
-    # ==============================
     if direccion == "call" and not info_fuerza["alcista"]:
         return None
 
@@ -155,9 +165,15 @@ def pro_signal(df):
         return None
 
     # ==============================
-    # FILTRO 3: CONTINUIDAD
+    # CONTINUIDAD
     # ==============================
     if not es_continuidad(info_confirm, direccion):
+        return None
+
+    # ==============================
+    # 🔥 NUEVO FILTRO CLAVE
+    # ==============================
+    if not evitar_retroceso(info_confirm, direccion):
         return None
 
     # ==============================
