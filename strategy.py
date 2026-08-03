@@ -9,8 +9,17 @@ losses = 0
 def update_result(result):
     global wins, losses
 
+    # 🔥 SEGURIDAD TOTAL
     if isinstance(result, tuple):
         result = result[0]
+
+    if isinstance(result, str):
+        if result.lower() == "win":
+            result = 1
+        elif result.lower() == "loose":
+            result = -1
+        else:
+            result = 0
 
     if result > 0:
         wins += 1
@@ -21,7 +30,7 @@ def update_result(result):
 
 
 # ==============================
-# 📊 DETECTAR DIRECCIÓN GENERAL
+# 📊 TENDENCIA SIMPLE
 # ==============================
 def tendencia(df):
     ultimas = df.tail(10)
@@ -29,10 +38,10 @@ def tendencia(df):
     alcistas = sum(ultimas["close"] > ultimas["open"])
     bajistas = sum(ultimas["close"] < ultimas["open"])
 
-    if alcistas >= 6:
+    if alcistas >= 5:
         return "call"
 
-    if bajistas >= 6:
+    if bajistas >= 5:
         return "put"
 
     return None
@@ -48,20 +57,11 @@ def vela_fuerte(v):
     if rango == 0:
         return False
 
-    fuerza = cuerpo / rango
-
-    mecha_sup = v["max"] - max(v["close"], v["open"])
-    mecha_inf = min(v["close"], v["open"]) - v["min"]
-
-    return (
-        fuerza > 0.6 and
-        mecha_sup < cuerpo and
-        mecha_inf < cuerpo
-    )
+    return (cuerpo / rango) > 0.6
 
 
 # ==============================
-# 🚫 EVITAR LATERALIDAD
+# 🚫 EVITAR LATERAL
 # ==============================
 def mercado_limpio(df):
     ultimas = df.tail(20)
@@ -69,25 +69,7 @@ def mercado_limpio(df):
     rango_total = ultimas["max"].max() - ultimas["min"].min()
     rango_promedio = (ultimas["max"] - ultimas["min"]).mean()
 
-    if rango_total < rango_promedio * 4:
-        return False
-
-    return True
-
-
-# ==============================
-# 🚫 EVITAR ENTRAR TARDE
-# ==============================
-def evitar_tarde(df, direccion):
-    ultimas = df.tail(5)
-
-    if direccion == "call":
-        return sum(ultimas["close"] > ultimas["open"]) < 4
-
-    if direccion == "put":
-        return sum(ultimas["close"] < ultimas["open"]) < 4
-
-    return False
+    return rango_total > (rango_promedio * 3)
 
 
 # ==============================
@@ -105,53 +87,37 @@ def pro_signal(df, aggressive=True):
         if dir_tendencia is None:
             return None
 
-        v1 = df.iloc[-2]  # vela de impulso
-        v2 = df.iloc[-1]  # confirmación
+        v1 = df.iloc[-2]
+        v2 = df.iloc[-1]
 
         if not vela_fuerte(v1):
             return None
 
-        # ======================
-        # 📈 CALL
-        # ======================
+        # CALL
         if dir_tendencia == "call":
+            if v2["close"] > v2["open"]:
+                return {
+                    "direction": "call",
+                    "score": 70,
+                    "reason": [
+                        "Tendencia alcista",
+                        "Impulso fuerte",
+                        "Continuidad"
+                    ]
+                }
 
-            if not (v2["close"] > v2["open"]):
-                return None
-
-            if not evitar_tarde(df, "call"):
-                return None
-
-            return {
-                "direction": "call",
-                "score": 70,
-                "reason": [
-                    "Tendencia alcista",
-                    "Vela fuerte",
-                    "Continuidad confirmada"
-                ]
-            }
-
-        # ======================
-        # 📉 PUT
-        # ======================
+        # PUT
         if dir_tendencia == "put":
-
-            if not (v2["close"] < v2["open"]):
-                return None
-
-            if not evitar_tarde(df, "put"):
-                return None
-
-            return {
-                "direction": "put",
-                "score": 70,
-                "reason": [
-                    "Tendencia bajista",
-                    "Vela fuerte",
-                    "Continuidad confirmada"
-                ]
-            }
+            if v2["close"] < v2["open"]:
+                return {
+                    "direction": "put",
+                    "score": 70,
+                    "reason": [
+                        "Tendencia bajista",
+                        "Impulso fuerte",
+                        "Continuidad"
+                    ]
+                }
 
         return None
 
