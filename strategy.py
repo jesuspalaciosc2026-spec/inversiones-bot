@@ -21,7 +21,7 @@ def update_result(result):
 
 
 # ==============================
-# 📊 ESTRUCTURA 5M
+# 📊 ESTRUCTURA (5M)
 # ==============================
 def estructura_tendencia(df):
     ultimas = df.tail(6)
@@ -41,7 +41,7 @@ def estructura_tendencia(df):
 
 
 # ==============================
-# 💪 VELA DE IMPULSO 5M
+# 💪 VELA DE IMPULSO (5M)
 # ==============================
 def vela_fuerza(v):
     cuerpo = abs(v["close"] - v["open"])
@@ -78,7 +78,7 @@ def evitar_tarde(df, direccion):
 
 
 # ==============================
-# 🔥 SEÑAL EN 5M (SOLO IMPULSO)
+# 🔥 SEÑAL 5M (IMPULSO)
 # ==============================
 def signal_5m(df):
     try:
@@ -94,29 +94,22 @@ def signal_5m(df):
         if not vela_fuerza(v_fuerza):
             return None
 
-        motivos = []
-
         if tendencia == "alcista":
             direccion = "call"
-            motivos.append("Estructura alcista 5M")
-
-        elif tendencia == "bajista":
-            direccion = "put"
-            motivos.append("Estructura bajista 5M")
-
         else:
-            return None
+            direccion = "put"
 
         if not evitar_tarde(df, direccion):
             return None
 
-        motivos.append("Vela de impulso fuerte 5M")
-        motivos.append("Inicio de impulso (no tardío)")
-
         return {
             "direction": direccion,
             "score": 50,
-            "reason": motivos
+            "reason": [
+                f"Estructura {tendencia}",
+                "Impulso fuerte 5M",
+                "Entrada en continuidad"
+            ]
         }
 
     except Exception as e:
@@ -125,12 +118,10 @@ def signal_5m(df):
 
 
 # ==============================
-# 🎯 CONFIRMACIÓN 1M (SNIPER)
+# 🎯 CONFIRMACIÓN 1M OPTIMIZADA
 # ==============================
-def confirmacion_1m(df):
-    v1 = df.iloc[-3]
-    v2 = df.iloc[-2]
-    v3 = df.iloc[-1]
+def confirmacion_1m(df, direccion):
+    ultimas = df.tail(5)
 
     def fuerza(v):
         cuerpo = abs(v["close"] - v["open"])
@@ -139,53 +130,21 @@ def confirmacion_1m(df):
             return 0
         return cuerpo / rango
 
-    def sin_mecha(v):
-        cuerpo = abs(v["close"] - v["open"])
-        mecha_sup = v["max"] - max(v["close"], v["open"])
-        mecha_inf = min(v["close"], v["open"]) - v["min"]
+    for i in range(len(ultimas)):
+        v = ultimas.iloc[i]
 
-        return mecha_sup < cuerpo * 0.5 and mecha_inf < cuerpo * 0.5
+        if direccion == "call":
+            if (
+                v["close"] > v["open"] and
+                fuerza(v) > 0.6
+            ):
+                return True
 
-    # ======================
-    # 📈 CALL
-    # ======================
-    if v1["close"] < v1["open"]:
+        if direccion == "put":
+            if (
+                v["close"] < v["open"] and
+                fuerza(v) > 0.6
+            ):
+                return True
 
-        if (
-            v2["close"] > v2["open"] and
-            v3["close"] > v3["open"] and
-
-            fuerza(v2) > 0.6 and
-            fuerza(v3) > 0.7 and
-
-            fuerza(v3) >= fuerza(v2) and
-
-            sin_mecha(v2) and
-            sin_mecha(v3) and
-
-            v3["close"] > v2["close"]
-        ):
-            return "call"
-
-    # ======================
-    # 📉 PUT
-    # ======================
-    if v1["close"] > v1["open"]:
-
-        if (
-            v2["close"] < v2["open"] and
-            v3["close"] < v3["open"] and
-
-            fuerza(v2) > 0.6 and
-            fuerza(v3) > 0.7 and
-
-            fuerza(v3) >= fuerza(v2) and
-
-            sin_mecha(v2) and
-            sin_mecha(v3) and
-
-            v3["close"] < v2["close"]
-        ):
-            return "put"
-
-    return None
+    return False
