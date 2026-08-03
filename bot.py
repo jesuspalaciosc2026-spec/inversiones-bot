@@ -16,7 +16,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 PAIR = "EURUSD-OTC"
 
-AMOUNT = 20000
+AMOUNT = 20
 EXPIRATION = 1  # 1 minuto
 
 bot_active = True
