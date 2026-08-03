@@ -23,12 +23,13 @@ PAIRS = [
 
 AMOUNT = 20000
 EXPIRATION = 1
-MAX_OPERATIONS = 300   # 🔥 límite que pediste
+MAX_OPERATIONS = 300
 
 bot_active = True
 operations_count = 0
 last_candle_time = {}
 last_update_id = None
+
 
 # ==============================
 # TELEGRAM
@@ -72,7 +73,7 @@ def check_telegram_commands():
                         send_telegram("✅ BOT ACTIVADO")
 
     except Exception as e:
-        print("❌ Error Telegram comandos:", e, flush=True)
+        print("❌ Error comandos Telegram:", e, flush=True)
 
 
 # ==============================
@@ -89,6 +90,7 @@ if not Iq.check_connect():
 print("✅ Conectado", flush=True)
 send_telegram("🤖 BOT INICIADO")
 
+
 # ==============================
 # LOOP PRINCIPAL
 # ==============================
@@ -102,9 +104,8 @@ while True:
             time.sleep(2)
             continue
 
-        # 🔥 NO BLOQUEA RAILWAY
         if operations_count >= MAX_OPERATIONS:
-            print("⛔ Límite alcanzado, esperando...", flush=True)
+            print("⛔ Límite alcanzado...", flush=True)
             time.sleep(5)
             continue
 
@@ -125,9 +126,9 @@ while True:
                     "min": c["min"]
                 } for c in candles])
 
-                current_time = candles[-1]["from"]
+                # 🔥 USAR VELA CERRADA
+                current_time = candles[-2]["from"]
 
-                # 🔥 EVITA REPETIR SEÑALES
                 if pair in last_candle_time and last_candle_time[pair] == current_time:
                     continue
 
@@ -141,9 +142,8 @@ while True:
                     print("❌ Sin señal", flush=True)
                     continue
 
-                direccion = signal["direction"]
-                score = signal["score"]
-                reason = "\n".join(signal["reason"])
+                # 🔥 FIX ERROR TUPLA
+                direccion, patron, score = signal
 
                 print(f"🔥 SEÑAL {pair}: {direccion.upper()}", flush=True)
 
@@ -151,7 +151,7 @@ while True:
                     f"📊 {pair}\n"
                     f"Señal: {direccion.upper()}\n"
                     f"Score: {score}\n"
-                    f"📌 Motivo:\n{reason}"
+                    f"📌 Patrón: {patron}"
                 )
 
                 # ==============================
@@ -171,12 +171,11 @@ while True:
                         f"{pair} → {direccion.upper()}"
                     )
 
-                    # esperar resultado
                     time.sleep(EXPIRATION * 60)
 
                     result = Iq.check_win_v4(trade_id)
 
-                    # 🔥 FIX ERROR tuple/string
+                    # 🔥 FIX RESULT
                     if isinstance(result, tuple):
                         result = result[0]
 
