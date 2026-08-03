@@ -16,9 +16,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 PAIRS = [
     "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "USDCHF-OTC",
-    "EURJPY-OTC"
 ]
 
 AMOUNT = 20000
