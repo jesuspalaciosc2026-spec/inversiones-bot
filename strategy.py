@@ -1,5 +1,3 @@
-import numpy as np
-
 # ==============================
 # RESULTADOS
 # ==============================
@@ -8,6 +6,12 @@ losses = 0
 
 def update_result(result):
     global wins, losses
+
+    if isinstance(result, tuple):
+        result = result[0]
+
+    if isinstance(result, str):
+        result = float(result)
 
     if result > 0:
         wins += 1
@@ -18,138 +22,196 @@ def update_result(result):
 
 
 # ==============================
-# 🔥 FUERZA REAL
+# DETECCIÓN DE FUERZA (SIN NÚMEROS FIJOS)
 # ==============================
-def fuerza_real(vela):
+def es_vela_fuerte(df, index):
+    vela = df.iloc[index]
+
     cuerpo = abs(vela["close"] - vela["open"])
     rango = vela["max"] - vela["min"]
 
     if rango == 0:
         return False
 
-    fuerza = cuerpo / rango
+    # Comparación con velas anteriores (dinámico)
+    ultimas = df.iloc[index-5:index]
 
-    return fuerza > 0.75
+    cuerpos_previos = abs(ultimas["close"] - ultimas["open"])
+    promedio = cuerpos_previos.mean()
+
+    # 👉 Fuerza relativa (NO número fijo)
+    if cuerpo > promedio:
+        return True
+
+    return False
 
 
 # ==============================
-# 🚫 EVITAR TRAMPAS
+# DETECCIÓN DE INDECISIÓN
 # ==============================
-def evitar_trampa(vela):
-    mecha_sup = vela["max"] - max(vela["open"], vela["close"])
-    mecha_inf = min(vela["open"], vela["close"]) - vela["min"]
+def es_indecision(df, index):
+    vela = df.iloc[index]
 
     cuerpo = abs(vela["close"] - vela["open"])
+    rango = vela["max"] - vela["min"]
 
-    if mecha_sup > cuerpo or mecha_inf > cuerpo:
+    if rango == 0:
+        return True
+
+    # Comparación relativa
+    ultimas = df.iloc[index-5:index]
+    cuerpos_previos = abs(ultimas["close"] - ultimas["open"])
+    promedio = cuerpos_previos.mean()
+
+    return cuerpo < promedio
+
+
+# ==============================
+# FILTRO DE TENDENCIA (SIN NÚMEROS)
+# ==============================
+def detectar_tendencia(df):
+    ultimas = df.tail(10)
+
+    alcistas = sum(ultimas["close"] > ultimas["open"])
+    bajistas = sum(ultimas["close"] < ultimas["open"])
+
+    if alcistas > bajistas:
+        return "alcista"
+    elif bajistas > alcistas:
+        return "bajista"
+
+    return None
+
+
+# ==============================
+# FILTRO IMPULSO
+# ==============================
+def filtro_impulso(df):
+    ultimas = df.tail(6)
+
+    cambios = abs(ultimas["close"] - ultimas["open"])
+    promedio = cambios.mean()
+
+    # Evitar mercado muerto
+    return promedio > 0
+
+
+# ==============================
+# FILTRO ZONA
+# ==============================
+def filtro_zona(df):
+    precio = df["close"].iloc[-1]
+
+    maximo = df["max"].tail(50).max()
+    minimo = df["min"].tail(50).min()
+
+    rango = maximo - minimo
+
+    if rango == 0:
+        return False
+
+    # Evitar extremos (dinámico)
+    posicion = (precio - minimo) / rango
+
+    if posicion > 0.9 or posicion < 0.1:
         return False
 
     return True
 
 
 # ==============================
-# 🔥 CONFIRMACIÓN LIMPIA
+# FILTRO CONTINUIDAD
 # ==============================
-def confirmacion_limpia(df):
+def filtro_continuidad(df, direccion):
+    ultimas = df.tail(4)
+
+    if direccion == "call":
+        return sum(ultimas["close"] > ultimas["open"]) >= 2
+
+    if direccion == "put":
+        return sum(ultimas["close"] < ultimas["open"]) >= 2
+
+    return False
+
+
+# ==============================
+# FILTRO CONTRA TENDENCIA
+# ==============================
+def filtro_contra_tendencia(df, direccion):
+    tendencia = detectar_tendencia(df)
+
+    if tendencia is None:
+        return False
+
+    if tendencia == "alcista" and direccion == "put":
+        return False
+
+    if tendencia == "bajista" and direccion == "call":
+        return False
+
+    return True
+
+
+# ==============================
+# 🔥 PATRÓN SNIPER MEJORADO
+# ==============================
+def patron_sniper(df):
+    if len(df) < 6:
+        return None
+
     v1 = df.iloc[-3]
     v2 = df.iloc[-2]
+    v3 = df.iloc[-1]
 
-    # ambas alcistas
-    if v1["close"] > v1["open"] and v2["close"] > v2["open"]:
-        mecha_sup1 = v1["max"] - v1["close"]
-        mecha_sup2 = v2["max"] - v2["close"]
+    # CALL
+    if v1["close"] < v1["open"]:
 
-        cuerpo1 = abs(v1["close"] - v1["open"])
-        cuerpo2 = abs(v2["close"] - v2["open"])
+        if es_vela_fuerte(df, -2) and es_vela_fuerte(df, -1):
+            if v2["close"] > v2["open"] and v3["close"] > v3["open"]:
+                if not es_indecision(df, -2) and not es_indecision(df, -1):
+                    return "call"
 
-        if mecha_sup1 < cuerpo1 * 0.3 and mecha_sup2 < cuerpo2 * 0.3:
-            return "call"
+    # PUT
+    if v1["close"] > v1["open"]:
 
-    # ambas bajistas
-    if v1["close"] < v1["open"] and v2["close"] < v2["open"]:
-        mecha_inf1 = v1["close"] - v1["min"]
-        mecha_inf2 = v2["close"] - v2["min"]
-
-        cuerpo1 = abs(v1["close"] - v1["open"])
-        cuerpo2 = abs(v2["close"] - v2["open"])
-
-        if mecha_inf1 < cuerpo1 * 0.3 and mecha_inf2 < cuerpo2 * 0.3:
-            return "put"
+        if es_vela_fuerte(df, -2) and es_vela_fuerte(df, -1):
+            if v2["close"] < v2["open"] and v3["close"] < v3["open"]:
+                if not es_indecision(df, -2) and not es_indecision(df, -1):
+                    return "put"
 
     return None
 
 
 # ==============================
-# 🚫 ENTRAR TARDE
-# ==============================
-def evitar_tarde(df, direccion):
-    ultimas = df.tail(5)
-
-    if direccion == "call":
-        return sum(ultimas["close"] > ultimas["open"]) < 4
-
-    if direccion == "put":
-        return sum(ultimas["close"] < ultimas["open"]) < 4
-
-    return False
-
-
-# ==============================
-# 🧠 ENTRADA SNIPER
-# ==============================
-def entrada_sniper(df, direccion):
-    ultima = df.iloc[-1]
-
-    if direccion == "call":
-        return ultima["close"] > ultima["open"]
-
-    if direccion == "put":
-        return ultima["close"] < ultima["open"]
-
-    return False
-
-
-# ==============================
-# 🚀 SEÑAL PRINCIPAL
+# 🔥 SEÑAL FINAL
 # ==============================
 def pro_signal(df, aggressive=True):
     try:
         if len(df) < 60:
-            return None
+            return None, None, 0
 
-        # 🔥 Confirmación de continuidad
-        direccion = confirmacion_limpia(df)
+        direccion = patron_sniper(df)
 
         if direccion is None:
-            return None
+            return None, None, 0
 
-        vela_confirmacion = df.iloc[-2]
+        if not filtro_impulso(df):
+            return None, None, 0
 
-        # 🔥 Filtros fuertes
-        if not fuerza_real(vela_confirmacion):
-            return None
+        if not filtro_zona(df):
+            return None, None, 0
 
-        if not evitar_trampa(vela_confirmacion):
-            return None
+        if not filtro_continuidad(df, direccion):
+            return None, None, 0
 
-        if not evitar_tarde(df, direccion):
-            return None
+        if not filtro_contra_tendencia(df, direccion):
+            return None, None, 0
 
-        # 🔥 Entrada sniper
-        if not entrada_sniper(df, direccion):
-            return None
+        score = 90
+        patron = "sniper_inteligente"
 
-        return {
-            "direction": direccion,
-            "score": 95,
-            "reason": [
-                "Continuidad confirmada (2 velas)",
-                "Velas fuertes reales",
-                "Sin mechas (sin manipulación)",
-                "Entrada sniper confirmada"
-            ]
-        }
+        return direccion, patron, score
 
     except Exception as e:
         print("❌ ERROR estrategia:", e)
-        return None
+        return None, None, 0
