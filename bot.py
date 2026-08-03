@@ -116,7 +116,6 @@ while True:
                 candles = Iq.get_candles(pair, 60, 100, time.time())
 
                 if not candles:
-                    print("⚠️ Sin datos", flush=True)
                     continue
 
                 df = pd.DataFrame([{
@@ -126,7 +125,7 @@ while True:
                     "min": c["min"]
                 } for c in candles])
 
-                # 🔥 USAR VELA CERRADA
+                # 🔥 USAR VELA CERRADA REAL
                 current_time = candles[-2]["from"]
 
                 if pair in last_candle_time and last_candle_time[pair] == current_time:
@@ -138,20 +137,30 @@ while True:
 
                 signal = pro_signal(df)
 
+                # ==============================
+                # VALIDACIONES (ANTI ERRORES)
+                # ==============================
                 if signal is None:
-                    print("❌ Sin señal", flush=True)
                     continue
 
-                # 🔥 FIX ERROR TUPLA
+                if not isinstance(signal, tuple):
+                    continue
+
                 direccion, patron, score = signal
 
+                if direccion is None:
+                    continue
+
+                # ==============================
+                # LOG SEÑAL
+                # ==============================
                 print(f"🔥 SEÑAL {pair}: {direccion.upper()}", flush=True)
 
                 send_telegram(
                     f"📊 {pair}\n"
                     f"Señal: {direccion.upper()}\n"
                     f"Score: {score}\n"
-                    f"📌 Patrón: {patron}"
+                    f"Patrón: {patron}"
                 )
 
                 # ==============================
@@ -175,7 +184,7 @@ while True:
 
                     result = Iq.check_win_v4(trade_id)
 
-                    # 🔥 FIX RESULT
+                    # 🔥 FIX RESULTADO
                     if isinstance(result, tuple):
                         result = result[0]
 
@@ -195,7 +204,8 @@ while True:
             except Exception as e:
                 print(f"❌ Error en {pair}: {e}", flush=True)
 
-        time.sleep(1)
+        # 🔥 MENOS SPAM + MÁS ESTABLE
+        time.sleep(3)
 
     except Exception as e:
         print("❌ ERROR GENERAL:", e, flush=True)
