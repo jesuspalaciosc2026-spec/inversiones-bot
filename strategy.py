@@ -18,57 +18,69 @@ def update_result(result):
 
 
 # ==============================
-# 🧠 INTERPRETACIÓN INTELIGENTE DE VELA
+# 🔥 FUERZA REAL
 # ==============================
-def interpretar_vela(v):
-    open_ = v["open"]
-    close = v["close"]
-    high = v["max"]
-    low = v["min"]
-
-    cuerpo = abs(close - open_)
-    rango = high - low
+def fuerza_real(vela):
+    cuerpo = abs(vela["close"] - vela["open"])
+    rango = vela["max"] - vela["min"]
 
     if rango == 0:
-        return None
+        return False
 
     fuerza = cuerpo / rango
 
-    mecha_sup = high - max(open_, close)
-    mecha_inf = min(open_, close) - low
+    return fuerza > 0.75
 
-    # 🔥 FUERZA LIMPIA
-    if fuerza > 0.7 and mecha_sup < cuerpo * 0.3 and mecha_inf < cuerpo * 0.3:
-        if close > open_:
-            return "call_fuerte"
-        else:
-            return "put_fuerte"
 
-    # 🔥 RECHAZO ABAJO
-    if mecha_inf > cuerpo * 1.2:
-        return "rechazo_alcista"
+# ==============================
+# 🚫 EVITAR TRAMPAS
+# ==============================
+def evitar_trampa(vela):
+    mecha_sup = vela["max"] - max(vela["open"], vela["close"])
+    mecha_inf = min(vela["open"], vela["close"]) - vela["min"]
 
-    # 🔥 RECHAZO ARRIBA
-    if mecha_sup > cuerpo * 1.2:
-        return "rechazo_bajista"
+    cuerpo = abs(vela["close"] - vela["open"])
+
+    if mecha_sup > cuerpo or mecha_inf > cuerpo:
+        return False
+
+    return True
+
+
+# ==============================
+# 🔥 CONFIRMACIÓN LIMPIA
+# ==============================
+def confirmacion_limpia(df):
+    v1 = df.iloc[-3]
+    v2 = df.iloc[-2]
+
+    # ambas alcistas
+    if v1["close"] > v1["open"] and v2["close"] > v2["open"]:
+        mecha_sup1 = v1["max"] - v1["close"]
+        mecha_sup2 = v2["max"] - v2["close"]
+
+        cuerpo1 = abs(v1["close"] - v1["open"])
+        cuerpo2 = abs(v2["close"] - v2["open"])
+
+        if mecha_sup1 < cuerpo1 * 0.3 and mecha_sup2 < cuerpo2 * 0.3:
+            return "call"
+
+    # ambas bajistas
+    if v1["close"] < v1["open"] and v2["close"] < v2["open"]:
+        mecha_inf1 = v1["close"] - v1["min"]
+        mecha_inf2 = v2["close"] - v2["min"]
+
+        cuerpo1 = abs(v1["close"] - v1["open"])
+        cuerpo2 = abs(v2["close"] - v2["open"])
+
+        if mecha_inf1 < cuerpo1 * 0.3 and mecha_inf2 < cuerpo2 * 0.3:
+            return "put"
 
     return None
 
 
 # ==============================
-# 🚫 MERCADO LIMPIO
-# ==============================
-def mercado_limpio(df):
-    ultimas = df.tail(20)
-
-    rango_total = ultimas["max"].max() - ultimas["min"].min()
-    rango_promedio = (ultimas["max"] - ultimas["min"]).mean()
-
-    return rango_total > rango_promedio * 3
-
-
-# ==============================
-# 🚫 EVITAR ENTRAR TARDE
+# 🚫 ENTRAR TARDE
 # ==============================
 def evitar_tarde(df, direccion):
     ultimas = df.tail(5)
@@ -83,6 +95,21 @@ def evitar_tarde(df, direccion):
 
 
 # ==============================
+# 🧠 ENTRADA SNIPER
+# ==============================
+def entrada_sniper(df, direccion):
+    ultima = df.iloc[-1]
+
+    if direccion == "call":
+        return ultima["close"] > ultima["open"]
+
+    if direccion == "put":
+        return ultima["close"] < ultima["open"]
+
+    return False
+
+
+# ==============================
 # 🚀 SEÑAL PRINCIPAL
 # ==============================
 def pro_signal(df, aggressive=True):
@@ -90,44 +117,36 @@ def pro_signal(df, aggressive=True):
         if len(df) < 60:
             return None
 
-        if not mercado_limpio(df):
+        # 🔥 Confirmación de continuidad
+        direccion = confirmacion_limpia(df)
+
+        if direccion is None:
             return None
 
-        # 🔥 USAR VELA CERRADA
-        vela = df.iloc[-2]
+        vela_confirmacion = df.iloc[-2]
 
-        tipo = interpretar_vela(vela)
-
-        if tipo is None:
+        # 🔥 Filtros fuertes
+        if not fuerza_real(vela_confirmacion):
             return None
 
-        # 🔥 DECISIÓN INTELIGENTE
-        if tipo == "call_fuerte":
-            direccion = "call"
-
-        elif tipo == "put_fuerte":
-            direccion = "put"
-
-        elif tipo == "rechazo_alcista":
-            direccion = "call"
-
-        elif tipo == "rechazo_bajista":
-            direccion = "put"
-
-        else:
+        if not evitar_trampa(vela_confirmacion):
             return None
 
         if not evitar_tarde(df, direccion):
+            return None
+
+        # 🔥 Entrada sniper
+        if not entrada_sniper(df, direccion):
             return None
 
         return {
             "direction": direccion,
             "score": 95,
             "reason": [
-                f"Tipo de vela: {tipo}",
-                "Lectura de recorrido",
-                "Confirmación por cierre",
-                "Sin manipulación evidente"
+                "Continuidad confirmada (2 velas)",
+                "Velas fuertes reales",
+                "Sin mechas (sin manipulación)",
+                "Entrada sniper confirmada"
             ]
         }
 
