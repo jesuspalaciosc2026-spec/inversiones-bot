@@ -72,62 +72,7 @@ def detectar_tendencia(df):
 
 
 # ==============================
-# FILTRO DE FUERZA REAL
-# ==============================
-def es_fuerza_real(info):
-    if info is None:
-        return False
-
-    # 🔥 cuerpo dominante (evita velas débiles)
-    if info["fuerza"] < 0.6:
-        return False
-
-    return True
-
-
-# ==============================
-# FILTRO CONTINUIDAD LIMPIA
-# ==============================
-def es_continuidad(info, direccion):
-    if info is None:
-        return False
-
-    # 🔥 continuidad fuerte
-    if info["fuerza"] < 0.5:
-        return False
-
-    if direccion == "call":
-        if not info["alcista"]:
-            return False
-
-    if direccion == "put":
-        if not info["bajista"]:
-            return False
-
-    return True
-
-
-# ==============================
-# FILTRO ANTI-RETROCESO (CLAVE)
-# ==============================
-def evitar_retroceso(info_confirm, direccion):
-
-    # ❌ Evita entrar si la vela cambia dirección
-    if direccion == "call" and info_confirm["close"] <= info_confirm["open"]:
-        return False
-
-    if direccion == "put" and info_confirm["close"] >= info_confirm["open"]:
-        return False
-
-    # ❌ Evita velas con poco cuerpo (indecisión)
-    if info_confirm["fuerza"] < 0.6:
-        return False
-
-    return True
-
-
-# ==============================
-# SEÑAL PRINCIPAL
+# SEÑAL PRINCIPAL (CORREGIDA)
 # ==============================
 def pro_signal(df):
 
@@ -153,9 +98,9 @@ def pro_signal(df):
         return None
 
     # ==============================
-    # IMPULSO
+    # IMPULSO (vela fuerte)
     # ==============================
-    if not es_fuerza_real(info_fuerza):
+    if info_fuerza["fuerza"] < 0.6:
         return None
 
     if direccion == "call" and not info_fuerza["alcista"]:
@@ -165,15 +110,32 @@ def pro_signal(df):
         return None
 
     # ==============================
-    # CONTINUIDAD
+    # 🔥 VALIDACIÓN REAL (ANTI ERROR)
     # ==============================
-    if not es_continuidad(info_confirm, direccion):
-        return None
+    if direccion == "call":
+
+        # ❌ si vela roja → cancelar
+        if info_confirm["close"] <= info_confirm["open"]:
+            return None
+
+        # ❌ si rompe mínimo → giro
+        if info_confirm["low"] < info_fuerza["low"]:
+            return None
+
+    if direccion == "put":
+
+        # ❌ si vela verde → cancelar
+        if info_confirm["close"] >= info_confirm["open"]:
+            return None
+
+        # ❌ si rompe máximo → giro
+        if info_confirm["high"] > info_fuerza["high"]:
+            return None
 
     # ==============================
-    # 🔥 NUEVO FILTRO CLAVE
+    # FUERZA CONFIRMACIÓN
     # ==============================
-    if not evitar_retroceso(info_confirm, direccion):
+    if info_confirm["fuerza"] < 0.55:
         return None
 
     # ==============================
