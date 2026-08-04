@@ -16,8 +16,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 PAIR = "EURUSD-OTC"
 
-AMOUNT = 20
-EXPIRATION = 1  # 1 minuto
+AMOUNT = 35
+EXPIRATION = 1
 
 bot_active = True
 last_candle_time = None
@@ -38,7 +38,7 @@ def send_telegram(msg):
 
 
 # ==============================
-# CONEXIÓN IQ OPTION
+# CONEXIÓN
 # ==============================
 print("🔌 Conectando...", flush=True)
 Iq = IQ_Option(EMAIL, PASSWORD)
@@ -49,28 +49,17 @@ if not Iq.check_connect():
     exit()
 
 print("✅ Conectado", flush=True)
-send_telegram("🤖 BOT SNIPER ACTIVADO")
-
-# ==============================
-# ESPERAR SEGUNDO 59 (SNIPER)
-# ==============================
-def esperar_cierre_vela():
-    while True:
-        segundos = int(time.time()) % 60
-        if segundos >= 59:
-            break
-        time.sleep(0.3)
+send_telegram("🤖 BOT SNIPER ACTIVO")
 
 # ==============================
 # LOOP PRINCIPAL
 # ==============================
 while True:
     try:
-        print("🟢 BOT ACTIVO...", flush=True)
-
         candles = Iq.get_candles(PAIR, 60, 100, time.time())
 
         if not candles:
+            time.sleep(1)
             continue
 
         df = pd.DataFrame([{
@@ -81,86 +70,83 @@ while True:
         } for c in candles])
 
         current_time = candles[-1]["from"]
+        seconds = int(time.time()) % 60
 
         # ==============================
         # NUEVA VELA DETECTADA
         # ==============================
         if last_candle_time != current_time:
+
+            last_candle_time = current_time
             print("🟢 Nueva vela detectada", flush=True)
 
-            # ==============================
-            # EJECUTAR ENTRADA PENDIENTE
-            # ==============================
-            if pending_signal is not None:
-                direccion, patron, score = pending_signal
+            # Analizar vela cerrada
+            try:
+                signal = pro_signal(df)
 
-                print(f"🚀 ENTRADA SNIPER: {direccion}", flush=True)
+                if signal is not None:
+                    direccion, patron, score = signal
 
-                send_telegram(
-                    f"🎯 ENTRADA SNIPER\n"
-                    f"{PAIR}\n"
-                    f"Dirección: {direccion.upper()}\n"
-                    f"Patrón: {patron}\n"
-                    f"Score: {score}"
-                )
+                    pending_signal = direccion
 
-                status, trade_id = Iq.buy(AMOUNT, PAIR, direccion, EXPIRATION)
-
-                if status:
-                    print("✅ OPERACIÓN ABIERTA", flush=True)
-
-                    time.sleep(EXPIRATION * 60)
-
-                    result = Iq.check_win_v4(trade_id)
-
-                    # FIX tuple
-                    if isinstance(result, tuple):
-                        result = result[0]
-
-                    try:
-                        result = float(result)
-                    except:
-                        result = 0
-
-                    update_result(result)
-
-                    print(f"📈 Resultado: {result}", flush=True)
-                    send_telegram(f"📈 Resultado: {result}")
-
-                else:
-                    print("❌ No se pudo abrir operación", flush=True)
-
-                pending_signal = None
-
-            # ==============================
-            # ANALIZAR VELA CERRADA
-            # ==============================
-            print("🧠 Analizando cierre...", flush=True)
-
-            signal = pro_signal(df)
-
-            if signal is not None:
-                direccion, patron, score = signal
-
-                if direccion is not None:
                     print(f"🔥 Señal detectada: {direccion}", flush=True)
 
                     send_telegram(
-                        f"📊 SEÑAL DETECTADA\n"
-                        f"{PAIR}\n"
-                        f"Dirección: {direccion.upper()}\n"
-                        f"Patrón: {patron}\n"
-                        f"Score: {score}\n"
-                        f"⏳ Esperando apertura siguiente vela..."
+                        f"📊 EURUSD-OTC\n"
+                        f"Señal: {direccion.upper()}\n"
+                        f"Modo: SNIPER\n"
+                        f"Entrada en siguiente vela"
                     )
 
-                    # Guardar señal para siguiente vela
-                    pending_signal = signal
+                else:
+                    pending_signal = None
 
-            last_candle_time = current_time
+            except Exception as e:
+                print(f"❌ Error análisis: {e}", flush=True)
+
+        # ==============================
+        # ENTRADA SNIPER (SEGUNDO 59)
+        # ==============================
+        if pending_signal is not None and seconds == 59:
+
+            print("🎯 Ejecutando entrada SNIPER...", flush=True)
+
+            direccion = pending_signal
+            pending_signal = None
+
+            status, trade_id = Iq.buy(AMOUNT, PAIR, direccion, EXPIRATION)
+
+            if status:
+                print("✅ OPERACIÓN ABIERTA", flush=True)
+
+                send_telegram(
+                    f"🚀 ENTRADA SNIPER\n"
+                    f"{PAIR} → {direccion.upper()}"
+                )
+
+                time.sleep(EXPIRATION * 60)
+
+                result = Iq.check_win_v4(trade_id)
+
+                # 🔥 FIX errores tuple
+                if isinstance(result, tuple):
+                    result = result[0]
+
+                try:
+                    result = float(result)
+                except:
+                    result = 0
+
+                update_result(result)
+
+                print(f"📈 Resultado: {result}", flush=True)
+                send_telegram(f"📈 Resultado: {result}")
+
+            else:
+                print("❌ No se ejecutó la orden", flush=True)
 
         time.sleep(0.5)
 
     except Exception as e:
-        print("❌ ERROR GENERAL:", e, flush=True)
+        print(f"❌ ERROR GENERAL: {e}", flush=True)
         time.sleep(2)
