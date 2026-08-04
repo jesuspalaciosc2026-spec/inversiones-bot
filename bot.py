@@ -1,31 +1,38 @@
+import os
 import time
-from datetime import datetime
 from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal
 
 # =========================
-# CONFIGURACIÓN
+# CONFIG (Railway compatible)
 # =========================
-EMAIL = "TU_EMAIL"
-PASSWORD = "TU_PASSWORD"
+EMAIL = os.getenv("IQ_EMAIL")
+PASSWORD = os.getenv("IQ_PASSWORD")
 
 PAIR = "EURUSD-OTC"
-AMOUNT = 75
-EXPIRATION = 1  # 1 minuto
+AMOUNT = 55
+EXPIRATION = 1  # minutos
 
 # =========================
-# CONEXIÓN
+# CONEXIÓN SEGURA
 # =========================
-iq = IQ_Option(EMAIL, PASSWORD)
-iq.connect()
+def conectar():
+    print("🔌 Conectando...")
+    iq = IQ_Option(EMAIL, PASSWORD)
+    status, reason = iq.connect()
 
-if not iq.check_connect():
-    print("❌ Error de conexión")
+    if not status:
+        print("❌ ERROR CONEXIÓN:", reason)
+        return None
+    else:
+        print("✅ Conectado correctamente")
+        iq.change_balance("PRACTICE")
+        return iq
+
+iq = conectar()
+
+if iq is None:
     exit()
-else:
-    print("✅ Conectado")
-
-iq.change_balance("PRACTICE")
 
 # =========================
 # VARIABLES CONTROL
@@ -38,52 +45,55 @@ operacion_ejecutada = False
 # =========================
 while True:
     try:
-        # Obtener velas (M1)
+        # 🔄 RECONEXIÓN AUTOMÁTICA
+        if not iq.check_connect():
+            print("🔁 Reconectando...")
+            iq = conectar()
+            if iq is None:
+                time.sleep(5)
+                continue
+
         candles = iq.get_candles(PAIR, 60, 50, time.time())
 
         if not candles:
             time.sleep(1)
             continue
 
-        # Tiempo de la última vela
         current_candle_time = candles[-1]["from"]
 
         # =========================
-        # DETECTAR NUEVA VELA
+        # NUEVA VELA DETECTADA
         # =========================
         if last_candle_time != current_candle_time:
             last_candle_time = current_candle_time
             operacion_ejecutada = False
 
-            print("🟢 Nueva vela detectada")
-
-            # Convertir a formato tipo DataFrame simple
-            df = candles
+            print("🟢 Nueva vela")
 
             # =========================
             # ANALIZAR VELA CERRADA
             # =========================
-            signal = pro_signal(df)
+            signal = pro_signal(candles)
 
-            if signal:
-                print(f"🔥 SEÑAL DETECTADA: {signal.upper()}")
+            if signal and not operacion_ejecutada:
+                print(f"🔥 SEÑAL: {signal.upper()}")
 
                 # =========================
-                # EJECUTAR EN APERTURA SIGUIENTE
+                # EJECUCIÓN EN APERTURA
                 # =========================
-                check, id = iq.buy(AMOUNT, PAIR, signal, EXPIRATION)
+                status, trade_id = iq.buy(AMOUNT, PAIR, signal, EXPIRATION)
 
-                if check:
-                    print(f"✅ OPERACIÓN EJECUTADA → {signal.upper()}")
+                if status:
+                    print(f"✅ ENTRADA EJECUTADA → {signal.upper()}")
                     operacion_ejecutada = True
                 else:
                     print("❌ Error al ejecutar operación")
 
         # =========================
-        # EVITAR SPAM
+        # CONTROL DE VELOCIDAD (SIN SPAM)
         # =========================
         time.sleep(1)
 
     except Exception as e:
-        print("❌ ERROR:", e)
-        time.sleep(2)
+        print("❌ ERROR GENERAL:", e)
+        time.sleep(3)
