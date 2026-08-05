@@ -15,7 +15,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 PAIR = "EURUSD-OTC"
-AMOUNT = 30
+AMOUNT = TODO_TU_BALANCE
 EXPIRATION = 1
 
 bot_activo = True
