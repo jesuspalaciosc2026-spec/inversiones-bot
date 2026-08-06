@@ -1,55 +1,47 @@
-import os
 import time
+import os
 import requests
-import pandas as pd
 from iqoptionapi.stable_api import IQ_Option
 from strategy import pro_signal
 
-# =========================
-# CONFIG
-# =========================
+# ================= CONFIG =================
 EMAIL = os.getenv("IQ_EMAIL")
 PASSWORD = os.getenv("IQ_PASSWORD")
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-PAIR = "EURUSD-OTC"
-AMOUNT = 30
-EXPIRATION = 1
+PAR = "EURUSD-OTC"
+MONTO = 2
+EXPIRACION = 1
 
+# ================= VARIABLES =================
+iq = None
 bot_activo = True
-last_update_id = None
+last_update_id = 0
+ultimo_trade = 0
 
-
-# =========================
-# TELEGRAM
-# =========================
+# ================= TELEGRAM =================
 def enviar_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-    except:
-        pass
+    except Exception as e:
+        print("Telegram error:", e)
 
 
 def leer_comandos():
     global bot_activo, last_update_id
 
     try:
-        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-        response = requests.get(url).json()
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id+1}"
+        res = requests.get(url).json()
 
-        for update in response["result"]:
-            update_id = update["update_id"]
+        for upd in res.get("result", []):
+            last_update_id = upd["update_id"]
 
-            if last_update_id and update_id <= last_update_id:
-                continue
-
-            last_update_id = update_id
-
-            if "message" in update:
-                text = update["message"].get("text", "")
+            if "message" in upd:
+                text = upd["message"].get("text", "")
 
                 if text == "/start":
                     bot_activo = True
@@ -59,90 +51,101 @@ def leer_comandos():
                     bot_activo = False
                     enviar_telegram("🔴 BOT DETENIDO")
 
-    except:
-        pass
+    except Exception as e:
+        print("Error comandos:", e)
 
-
-# =========================
-# CONEXIÓN
-# =========================
+# ================= CONEXIÓN =================
 def conectar():
-    iq = IQ_Option(EMAIL, PASSWORD)
-    status, reason = iq.connect()
+    global iq
 
-    if not status:
-        print("❌ ERROR:", reason)
-        return None
+    while True:
+        try:
+            iq = IQ_Option(EMAIL, PASSWORD)
+            iq.connect()
 
-    print("✅ Conectado")
-    enviar_telegram("✅ Bot conectado a IQ Option")
-    iq.change_balance("PRACTICE")
-    return iq
+            if iq.check_connect():
+                print("✅ Conectado a IQ Option")
+                enviar_telegram("✅ Bot conectado")
+                iq.change_balance("PRACTICE")
+                return
+            else:
+                print("❌ Error conexión")
 
+        except Exception as e:
+            print("Error conexión:", e)
 
-iq = conectar()
-if iq is None:
-    exit()
+        time.sleep(3)
 
+# ================= ULTRA TIMING =================
+def esperar_cierre_ultra():
+    while True:
+        t = time.time()
 
-# =========================
-# CONTROL
-# =========================
-last_candle_time = None
-operacion_ejecutada = False
+        sec = int(t) % 60
+        ms = int((t - int(t)) * 1000)
 
+        # 🎯 detectar cierre en 59.800 ms
+        if sec == 59 and ms >= 800:
+            return
 
-# =========================
-# LOOP
-# =========================
-while True:
-    try:
-        leer_comandos()
+        time.sleep(0.0001)  # ultra precisión
 
-        if not bot_activo:
-            time.sleep(1)
-            continue
+# ================= LOOP PRINCIPAL =================
+def main():
+    global ultimo_trade
 
-        if not iq.check_connect():
-            enviar_telegram("🔁 Reconectando...")
-            iq = conectar()
-            time.sleep(3)
-            continue
+    conectar()
 
-        candles = iq.get_candles(PAIR, 60, 100, time.time())
+    while True:
+        try:
+            leer_comandos()
 
-        if not candles:
-            time.sleep(1)
-            continue
+            if not bot_activo:
+                time.sleep(0.2)
+                continue
 
-        df = pd.DataFrame(candles)
-        current_candle_time = df.iloc[-1]["from"]
+            if not iq.check_connect():
+                print("🔄 Reconectando...")
+                conectar()
 
-        # =========================
-        # NUEVA VELA
-        # =========================
-        if last_candle_time != current_candle_time:
-            last_candle_time = current_candle_time
-            operacion_ejecutada = False
+            # ⚡ ESPERA CIERRE PRECISO
+            esperar_cierre_ultra()
 
-            print("🟢 Nueva vela")
+            # ⚡ SOLO UNA LLAMADA (menos latencia)
+            velas = iq.get_candles(PAR, 60, 5, time.time())
 
-            signal = pro_signal(df)
+            if not velas:
+                continue
 
-            if signal and not operacion_ejecutada:
-                enviar_telegram(f"🔥 Señal detectada: {signal.upper()}")
+            señal = pro_signal(velas)
 
-                status, trade_id = iq.buy(AMOUNT, PAIR, signal, EXPIRATION)
+            # ⚡ CONTROL DE SPAM DE OPERACIONES
+            if señal and time.time() - ultimo_trade > 55:
+
+                print(f"⚡ SEÑAL: {señal.upper()}")
+
+                # ⚡ EJECUCIÓN INMEDIATA
+                status, trade_id = iq.buy(MONTO, PAR, señal, EXPIRACION)
+
+                print("STATUS:", status)
+                print("RESPUESTA:", trade_id)
 
                 if status:
-                    enviar_telegram(f"✅ OPERACIÓN: {signal.upper()}")
-                    operacion_ejecutada = True
+                    ultimo_trade = time.time()
+                    enviar_telegram(f"⚡ OPERACIÓN {señal.upper()}")
                 else:
-                    enviar_telegram("❌ Error al ejecutar operación")
+                    enviar_telegram(f"❌ ERROR: {trade_id}")
 
-        time.sleep(1)
+        except Exception as e:
+            print("❌ ERROR GLOBAL:", e)
+            enviar_telegram(f"❌ ERROR: {e}")
+            time.sleep(1)
 
-    except Exception as e:
-        print("❌ ERROR:", e)
-        enviar_telegram(f"❌ ERROR: {e}")
-        time.sleep(3)
+# ================= START =================
+if __name__ == "__main__":
+    while True:
+        try:
+            main()
+        except Exception as e:
+            print("💥 CRASH:", e)
+            time.sleep(2)
